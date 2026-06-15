@@ -1,0 +1,6 @@
+{
+  "name": "Expresso Bus",
+  "description": "Plataforma de gestão operacional e simulação de transporte rodoviário em tempo real.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
