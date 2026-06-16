@@ -375,9 +375,12 @@ export default function App() {
     const o = cities.find((c) => c.id === newLine.originCityId);
     const d = cities.find((c) => c.id === newLine.destinationCityId);
     
-    // Check if the reciprocal return line already exists of the same serviceType
+    // Check if the reciprocal return line already exists with same route and stops
     const returnExists = lines.some(
-      (l) => l.originCityId === newLine.destinationCityId && l.destinationCityId === newLine.originCityId && l.serviceType === newLine.serviceType
+      (l) => l.originCityId === newLine.destinationCityId && 
+             l.destinationCityId === newLine.originCityId && 
+             l.serviceType === newLine.serviceType &&
+             JSON.stringify(l.stops) === JSON.stringify([...newLine.stops].reverse())
     );
  
     let returnLine: Line | null = null;
@@ -396,8 +399,8 @@ export default function App() {
     }
  
     setLines((prev) => {
-      // Prevent any theoretical double-insertion duplicates matching exact same O/D and service type
-      const uniqueNew = linesToInsert.filter(ln => !prev.some(p => p.originCityId === ln.originCityId && p.destinationCityId === ln.destinationCityId && p.serviceType === ln.serviceType));
+      // Prevent double insertions of identical line ID
+      const uniqueNew = linesToInsert.filter(ln => !prev.some(p => p.id === ln.id));
       return [...prev, ...uniqueNew];
     });
  
@@ -674,9 +677,10 @@ export default function App() {
         // Sort other vehicles by FIFO time waiting (longest waiting first, i.e., smallest availableSince first)
         availableBusesAtOrigin.sort((x, y) => (x.availableSince ?? 0) - (y.availableSince ?? 0));
 
+        const targetServiceType = schedule.serviceType || line.serviceType || 'convencional';
         // Separating into category matches and other categories to prioritize correct services
-        const matchingCategoryBuses = availableBusesAtOrigin.filter(b => (b.serviceType || 'convencional') === (line.serviceType || 'convencional'));
-        const otherCategoryBuses = availableBusesAtOrigin.filter(b => (b.serviceType || 'convencional') !== (line.serviceType || 'convencional'));
+        const matchingCategoryBuses = availableBusesAtOrigin.filter(b => (b.serviceType || 'convencional') === targetServiceType);
+        const otherCategoryBuses = availableBusesAtOrigin.filter(b => (b.serviceType || 'convencional') !== targetServiceType);
 
         if (availableBusesAtOrigin.length === 0) {
           // CANCEL THE TRIP: No own bus available
@@ -708,9 +712,9 @@ export default function App() {
             ? matchingCategoryBuses[0]
             : otherCategoryBuses[0];
 
-          const isPrimaryMismatch = (primaryBus.serviceType || 'convencional') !== (line.serviceType || 'convencional');
+          const isPrimaryMismatch = (primaryBus.serviceType || 'convencional') !== targetServiceType;
           const primaryMismatchAlert = isPrimaryMismatch
-            ? `Incompatibilidade: Linha ${(line.serviceType || 'convencional').toUpperCase()} atendida por veículo ${(primaryBus.serviceType || 'convencional').toUpperCase()}`
+            ? `Incompatibilidade: Linha ${targetServiceType.toUpperCase()} atendida por veículo ${(primaryBus.serviceType || 'convencional').toUpperCase()}`
             : undefined;
 
           const capacity = primaryBus.capacity;
@@ -727,15 +731,15 @@ export default function App() {
 
           if (excessPassengers >= 10) {
             const remainingBuses = availableBusesAtOrigin.filter(b => b.id !== primaryBus.id);
-            const remainingMatching = remainingBuses.filter(b => b.serviceType === line.serviceType);
-            const remainingOther = remainingBuses.filter(b => b.serviceType !== line.serviceType);
+            const remainingMatching = remainingBuses.filter(b => (b.serviceType || 'convencional') === targetServiceType);
+            const remainingOther = remainingBuses.filter(b => (b.serviceType || 'convencional') !== targetServiceType);
 
             if (remainingBuses.length > 0) {
               extraBus = remainingMatching.length > 0 ? remainingMatching[0] : remainingOther[0];
               passengersOnExtra = Math.min(extraBus.capacity, excessPassengers);
-              isExtraMismatch = (extraBus.serviceType || 'convencional') !== (line.serviceType || 'convencional');
+              isExtraMismatch = (extraBus.serviceType || 'convencional') !== targetServiceType;
               if (isExtraMismatch) {
-                extraMismatchAlert = `Incompatibilidade: Linha ${(line.serviceType || 'convencional').toUpperCase()} atendida por veículo extra ${(extraBus.serviceType || 'convencional').toUpperCase()}`;
+                extraMismatchAlert = `Incompatibilidade: Linha ${targetServiceType.toUpperCase()} atendida por veículo extra ${(extraBus.serviceType || 'convencional').toUpperCase()}`;
               }
               
               extraMinutes = futureMinutes + 10;
@@ -798,7 +802,7 @@ export default function App() {
           addLog(`Fila de Prioridade: Ônibus #${primaryBus.prefix} (${primaryBus.model}) escalado para a linha completa ${oCity?.name} ➔ ${dCity?.name} (viagem das ${futureTimeStr}). Transportando ${passengersOnPrimary} passageiros (sendo ${totalBoardedAccumulated} retirados da fila geral do terminal).`, 'success');
 
           if (isPrimaryMismatch) {
-            addLog(`DIVERGÊNCIA DE CATEGORIA: Escala automática alocou carro #${primaryBus.prefix} (${(primaryBus.serviceType || 'convencional').toUpperCase()}) na rota completa de categoria ${(line.serviceType || 'convencional').toUpperCase()} (${oCity?.name} ➔ ${dCity?.name}) por falta de veículo ideal na origem.`, 'warning');
+            addLog(`DIVERGÊNCIA DE CATEGORIA: Escala automática alocou carro #${primaryBus.prefix} (${(primaryBus.serviceType || 'convencional').toUpperCase()}) na rota completa de categoria ${targetServiceType.toUpperCase()} (${oCity?.name} ➔ ${dCity?.name}) por falta de veículo ideal na origem.`, 'warning');
           }
 
           // Dispatch EXTRA TRIP/REINFORCEMENT
@@ -837,7 +841,7 @@ export default function App() {
               addLog(`VIAGEM EXTRA (REFORCO): Demanda excedente na linha completa ${oCity?.name} ➔ ${dCity?.name} disparou escala de ônibus extra #${extraBus.prefix} (${extraBus.model}) partindo às ${extraTimeStr}. Transportando ${passengersOnExtra} passageiros. ${leftovers > 0 ? `${leftovers} acumulados para a próxima.` : ''}`, 'warning');
 
               if (isExtraMismatch) {
-                addLog(`DIVERGÊNCIA DE CATEGORIA (EXTRA): Reforço emergencial com carro #${extraBus.prefix} (${(extraBus.serviceType || 'convencional').toUpperCase()}) alocado na linha de categoria ${(line.serviceType || 'convencional').toUpperCase()} (${oCity?.name} ➔ ${dCity?.name}).`, 'warning');
+                addLog(`DIVERGÊNCIA DE CATEGORIA (EXTRA): Reforço emergencial com carro #${extraBus.prefix} (${(extraBus.serviceType || 'convencional').toUpperCase()}) alocado na linha de categoria ${targetServiceType.toUpperCase()} (${oCity?.name} ➔ ${dCity?.name}).`, 'warning');
               }
 
             } else {

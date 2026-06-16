@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Line, Schedule, City, DemandLevel, ScheduleFrequency, Bus, ServiceType } from '../types';
-import { Map, Clock, HelpCircle, Plus, Trash2, ArrowRight, TrendingUp, AlertTriangle, Briefcase, Sparkles, Check, Edit2 } from 'lucide-react';
+import { Map, Clock, HelpCircle, Plus, Trash2, ArrowRight, TrendingUp, AlertTriangle, Briefcase, Sparkles, Check, Edit2, X } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
 
 function calculateDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
   const R = 6371; // Earth's radius in km
@@ -211,15 +212,7 @@ export default function LineManager({
       return;
     }
 
-    // Check if line duplicates
-    const lineExists = lines.some(
-      (l) => l.originCityId === originCityId && l.destinationCityId === destinationCityId && l.serviceType === serviceType
-    );
-    if (lineExists) {
-      const displayService = serviceType === 'convencional' ? 'Convencional' : serviceType === 'executivo' ? 'Executivo' : 'Leito';
-      setLineError(`Já existe uma linha de serviço "${displayService}" registrada com essa origem e destino.`);
-      return;
-    }
+    // Allow creating multiple lines with same origin/destination. We can check if a line with identical details exists and warn, but do not block.
 
     const newLine: Line = {
       id: `line_${Math.random().toString(36).substring(2, 9)}`,
@@ -757,14 +750,14 @@ export default function LineManager({
         </form>
       )}
 
-      {/* Main interface split (Left Lines, Right Schedules setup) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* Main interface grid layout - Spanned full width */}
+      <div className="w-full">
         
-        {/* Lines Column */}
-        <div className="lg:col-span-7 space-y-4">
+        {/* Lines Grid section */}
+        <div className="space-y-4 w-full">
           <div className="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center shadow-sm">
             <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Linhas Disponíveis ({lines.length})</span>
-            <span className="text-[10px] text-slate-450 font-medium">Selecione uma linha para ver/gerenciar horários</span>
+            <span className="text-[10px] text-slate-450 font-medium">Clique em uma linha para abrir a central de controle de horários (balão)</span>
           </div>
 
           {lines.length === 0 ? (
@@ -772,7 +765,7 @@ export default function LineManager({
               <p className="text-slate-500 text-xs">Nenhuma linha cadastrada ainda no plano rodoviário.</p>
             </div>
           ) : (
-            <div className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {lines.map((line) => {
                 const origin = cities.find((c) => c.id === line.originCityId);
                 const dest = cities.find((c) => c.id === line.destinationCityId);
@@ -878,333 +871,352 @@ export default function LineManager({
           )}
         </div>
 
-        {/* Schedules Column (Right) */}
-        <div className="lg:col-span-5 space-y-4">
-          <div className="bg-white p-3 rounded-lg border border-slate-200 flex justify-between items-center shadow-sm">
-            <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">Horários Agendados</span>
-            <span className="text-[10px] text-slate-450 font-medium font-mono">Fluxos de Saídas</span>
-          </div>
+      </div>
 
-          {!activeLineId ? (
-            <div className="p-8 text-center bg-white border border-slate-200 rounded-xl space-y-2 shadow-xs">
-              <HelpCircle size={24} className="text-slate-400 mx-auto" />
-              <p className="text-slate-500 text-xs">Selecione uma linha ao lado para visualizar, simular e programar novos horários de saída.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              
-              {/* Active Line Header Visual */}
-              {(() => {
-                const line = lines.find((l) => l.id === activeLineId);
-                const origin = cities.find((c) => c.id === line?.originCityId);
-                const dest = cities.find((c) => c.id === line?.destinationCityId);
-                return (
-                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2 shadow-sm">
-                    <span className="text-[9px] font-bold text-blue-600 uppercase tracking-widest block font-mono">Linha Ativa</span>
-                    <h4 className="text-xs font-extrabold text-slate-800">
-                      {origin?.name} ➔ {dest?.name}
-                    </h4>
+      {/* Floating Schedules Balloon Modal with Frosted Backdrop Overlay */}
+      <AnimatePresence>
+        {activeLineId && (() => {
+          const line = lines.find((l) => l.id === activeLineId);
+          if (!line) return null;
+          const origin = cities.find((c) => c.id === line.originCityId);
+          const dest = cities.find((c) => c.id === line.destinationCityId);
+          const lineScheds = schedules.filter((s) => s.lineId === line.id);
+
+          return (
+            <div 
+              className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-slate-900/60 backdrop-blur-xs overflow-y-auto"
+              onClick={() => setActiveLineId(null)}
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.95, y: 15 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.95, y: 15 }}
+                transition={{ duration: 0.22, ease: 'easeOut' }}
+                onClick={(e) => e.stopPropagation()}
+                className="bg-white rounded-2xl border border-slate-200 shadow-2xl w-full max-w-2xl flex flex-col font-sans overflow-hidden"
+                id="schedule-balloon-modal"
+              >
+                
+                {/* Modal Header */}
+                <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center shrink-0">
+                  <div className="space-y-1">
+                    <span className="text-[9px] font-black text-blue-600 uppercase tracking-widest block font-mono">Central de Horários & Serviços</span>
+                    <h3 className="text-sm sm:text-base font-extrabold text-slate-800 flex items-center gap-1.5 flex-wrap">
+                      <span>{origin?.name || 'Origem'}</span>
+                      <ArrowRight size={14} className="text-slate-400" />
+                      <span>{dest?.name || 'Destino'}</span>
+                    </h3>
+                  </div>
+                  <button 
+                    onClick={() => setActiveLineId(null)}
+                    className="p-1.5 hover:bg-slate-200/60 rounded-full text-slate-400 hover:text-slate-700 transition-colors cursor-pointer"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+
+                {/* Modal Scrollable Content Container */}
+                <div className="p-6 overflow-y-auto max-h-[70vh] space-y-6">
+                  
+                  {/* Create New Schedule Form Section */}
+                  <div className="p-4 bg-slate-50/50 rounded-xl border border-slate-150 space-y-4">
+                    <span className="text-[10px] font-extrabold text-slate-700 uppercase tracking-wider block">Programar Nova Partida (Saída)</span>
                     
-                      {/* Add schedule form inside this box */}
-                      <form onSubmit={handleCreateSchedule} className="pt-3 border-t border-slate-200 space-y-3">
-                        <span className="text-[10px] font-extrabold text-slate-700 uppercase tracking-wider block">Programar Nova Partida</span>
-                        
-                        {schedError && (
-                          <div className="p-2.5 bg-rose-50 border border-rose-150 text-rose-700 rounded text-[11px] font-medium">
-                            {schedError}
-                          </div>
-                        )}
+                    {schedError && (
+                      <div className="p-2.5 bg-rose-50 border border-rose-150 text-rose-700 rounded text-[11px] font-medium">
+                        {schedError}
+                      </div>
+                    )}
 
-                        <div className="grid grid-cols-3 gap-2">
-                          <div className="space-y-1">
-                            <label className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">Horário (HH:MM)</label>
-                            <input
-                              type="text"
-                              placeholder="Ex: 08:30"
-                              value={departureTime}
-                              onChange={(e) => setDepartureTime(e.target.value)}
-                              maxLength={5}
-                              className="w-full text-center px-2 py-1.5 bg-white border border-slate-200 rounded font-bold text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-mono"
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">Frequência</label>
-                            <select
-                              value={frequency}
-                              onChange={(e) => setFrequency(e.target.value as ScheduleFrequency)}
-                              className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs text-slate-850 focus:outline-none focus:border-blue-500"
-                            >
-                              <option value="diaria">Saídas Diárias</option>
-                              <option value="seg-sex">Segunda a Sexta</option>
-                              <option value="fds">Finais de Semana</option>
-                              <option value="semanal">Semanal</option>
-                            </select>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">Serviço</label>
-                            <select
-                              value={schedServiceType}
-                              onChange={(e) => setSchedServiceType(e.target.value as ServiceType)}
-                              className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs text-slate-850 font-bold focus:outline-none focus:border-blue-500"
-                            >
-                              <option value="convencional">🚌 Convencional</option>
-                              <option value="executivo">🌟 Executivo</option>
-                              <option value="leito">💤 Leito</option>
-                            </select>
-                          </div>
+                    <form onSubmit={handleCreateSchedule} className="space-y-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="space-y-1">
+                          <label className="text-[9px] text-slate-500 font-bold block uppercase tracking-wider">Horário (HH:MM)</label>
+                          <input
+                            type="text"
+                            placeholder="Ex: 08:30"
+                            value={departureTime}
+                            onChange={(e) => setDepartureTime(e.target.value)}
+                            maxLength={5}
+                            className="w-full text-center px-2 py-1.5 bg-white border border-slate-200 rounded-lg font-bold text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-mono shadow-xs"
+                          />
                         </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] text-slate-500 font-bold block uppercase tracking-wider">Frequência</label>
+                          <select
+                            value={frequency}
+                            onChange={(e) => setFrequency(e.target.value as ScheduleFrequency)}
+                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs leading-normal font-medium text-slate-850 focus:outline-none focus:border-blue-500 shadow-xs"
+                          >
+                            <option value="diaria">Saídas Diárias</option>
+                            <option value="seg-sex">Segunda a Sexta</option>
+                            <option value="fds">Finais de Semana</option>
+                            <option value="semanal">Semanal</option>
+                          </select>
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[9px] text-slate-500 font-bold block uppercase tracking-wider">Serviço</label>
+                          <select
+                            value={schedServiceType}
+                            onChange={(e) => setSchedServiceType(e.target.value as ServiceType)}
+                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-bold text-slate-850 focus:outline-none focus:border-blue-500 shadow-xs"
+                          >
+                            <option value="convencional">🚌 Convencional</option>
+                            <option value="executivo">🌟 Executivo</option>
+                            <option value="leito">💤 Leito</option>
+                          </select>
+                        </div>
+                      </div>
 
-                        {(() => {
-                          const liveDemandEst = activeLineId && /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(departureTime)
-                            ? getScheduleDemandEstimation(activeLineId, departureTime, frequency, undefined, schedServiceType)
-                            : null;
-
-                          if (!liveDemandEst) return null;
-
-                          return (
-                            <div className="p-3 bg-gradient-to-r from-blue-50 to-indigo-50/50 rounded-lg border border-blue-105 space-y-1.5 text-[11px]">
-                              <span className="text-[9px] font-bold text-indigo-700 uppercase tracking-wider block font-mono flex items-center gap-1">
-                                <TrendingUp size={11} className="text-indigo-600 font-bold" /> Projeção de Demanda Estimada
-                              </span>
-                              <div className="flex justify-between items-baseline font-bold mt-1">
-                                <span className="text-slate-500 font-medium">Capacidade:</span>
-                                <span className="text-slate-700 font-mono">{liveDemandEst.maxCapacity} assentos ({line?.serviceType})</span>
-                              </div>
-                              <div className="flex justify-between items-baseline font-bold">
-                                <span className="text-slate-500 font-medium">Pasageiros esperados:</span>
-                                <span className="text-indigo-700 font-mono">{liveDemandEst.pMin} a {liveDemandEst.pMax} pax</span>
-                              </div>
-                              <div className="flex justify-between items-baseline font-bold">
-                                <span className="text-slate-500 font-medium">Ocupação Média Est.:</span>
-                                <span className="text-indigo-700 font-mono">{liveDemandEst.occupancyRate}%</span>
-                              </div>
-                              <div className="text-[9px] font-bold text-slate-700 bg-white/90 p-1 px-1.5 rounded border border-indigo-150/40 text-[9px]">
-                                🏷️ {liveDemandEst.timeLabel}
-                              </div>
-                              <p className="text-[9px] leading-relaxed text-slate-500 font-medium pt-1 border-t border-indigo-150/20">
-                                {liveDemandEst.explanation}
-                              </p>
-                            </div>
-                          );
-                        })()}
-
-                        <button
-                          type="submit"
-                          className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-bold transition-all cursor-pointer shadow-sm animate-fade-in"
-                          id="btn-add-schedule"
-                        >
-                          Confirmar Horário
-                        </button>
-                      </form>
-                  </div>
-                );
-              })()}
-
-              {/* Schedules lists */}
-              <div className="space-y-2">
-                <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Agenda Operacional</span>
-
-                {schedules.filter((s) => s.lineId === activeLineId).length === 0 ? (
-                  <div className="p-6 text-center bg-white border border-slate-200 border-dashed rounded-lg shadow-xs">
-                    <p className="text-slate-450 text-[11px]">Nenhum horário cadastrado para esta linha.</p>
-                  </div>
-                ) : (
-                  schedules
-                    .filter((s) => s.lineId === activeLineId)
-                    .map((sched) => {
-                      const line = lines.find((l) => l.id === sched.lineId)!;
-                      const check = checkScheduleFeasibility(sched, line);
-
-                      // In-place editing layout
-                      if (editingScheduleId === sched.id) {
-                        const liveEditDemandEst = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(editDepartureTime)
-                          ? getScheduleDemandEstimation(sched.lineId, editDepartureTime, editFrequency, sched.id, editServiceType)
+                      {/* Demand simulation helper projection */}
+                      {(() => {
+                        const liveDemandEst = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(departureTime)
+                          ? getScheduleDemandEstimation(activeLineId, departureTime, frequency, undefined, schedServiceType)
                           : null;
 
+                        if (!liveDemandEst) return null;
+
                         return (
-                          <div
-                            key={sched.id}
-                            className="p-4 bg-indigo-50/40 border border-indigo-400 rounded-xl space-y-3 shadow-sm animate-fade-in"
-                          >
-                            <div className="flex justify-between items-center">
-                              <span className="text-[10px] uppercase font-black text-indigo-700 flex items-center gap-1">
-                                <Edit2 size={11} /> Ajustar Horário
-                              </span>
-                              <span className="text-[9px] text-slate-400 font-mono">ID: {sched.id}</span>
+                          <div className="p-3.5 bg-gradient-to-r from-blue-50/70 to-indigo-50/50 rounded-lg border border-blue-100/50 space-y-1.5 text-[11px] animate-fadeIn">
+                            <span className="text-[9px] font-bold text-indigo-700 uppercase tracking-wider block font-mono flex items-center gap-1">
+                              <TrendingUp size={11} className="text-indigo-600 font-bold" /> Projeção de Demanda Estimada
+                            </span>
+                            <div className="flex justify-between items-baseline font-semibold mt-1">
+                              <span className="text-slate-500 font-medium font-sans">Frota sugerida:</span>
+                              <span className="text-slate-700 font-mono capitalize">{schedServiceType}</span>
                             </div>
-
-                            {editSchedError && (
-                              <div className="p-2.5 bg-rose-50 border border-rose-150 text-rose-700 rounded text-[10px] font-bold">
-                                {editSchedError}
-                              </div>
-                            )}
-
-                            <div className="grid grid-cols-3 gap-2">
-                              <div className="space-y-1">
-                                <label className="text-[8px] text-slate-400 font-bold block uppercase tracking-wider">Horário (HH:MM)</label>
-                                <input
-                                  type="text"
-                                  value={editDepartureTime}
-                                  onChange={(e) => setEditDepartureTime(e.target.value)}
-                                  maxLength={5}
-                                  className="w-full text-center px-2 py-1 bg-white border border-slate-200 rounded font-bold text-xs text-slate-800 font-mono"
-                                />
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-[8px] text-slate-400 font-bold block uppercase tracking-wider">Frequência</label>
-                                <select
-                                  value={editFrequency}
-                                  onChange={(e) => setEditFrequency(e.target.value as ScheduleFrequency)}
-                                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-850"
-                                >
-                                  <option value="diaria">Saídas Diárias</option>
-                                  <option value="seg-sex">Segunda a Sexta</option>
-                                  <option value="fds">Finais de Semana</option>
-                                  <option value="semanal">Semanal</option>
-                                </select>
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-[8px] text-slate-400 font-bold block uppercase tracking-wider">Serviço</label>
-                                <select
-                                  value={editServiceType}
-                                  onChange={(e) => setEditServiceType(e.target.value as ServiceType)}
-                                  className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-850 font-bold focus:outline-none"
-                                >
-                                  <option value="convencional">🚌 Convencional</option>
-                                  <option value="executivo">🌟 Executivo</option>
-                                  <option value="leito">💤 Leito</option>
-                                </select>
-                              </div>
+                            <div className="flex justify-between items-baseline font-bold animate-pulse">
+                              <span className="text-slate-500 font-medium font-sans">Passageiros esperados:</span>
+                              <span className="text-indigo-700 font-mono">{liveDemandEst.pMin} a {liveDemandEst.pMax} pax</span>
                             </div>
-
-                            {/* Live Demand Forecast under Editing */}
-                            {liveEditDemandEst && (
-                              <div className="p-2.5 bg-white border border-indigo-100 rounded-lg text-[10.5px] space-y-1">
-                                <div className="flex justify-between font-bold">
-                                  <span className="text-slate-500">Ocupação Corrigida:</span>
-                                  <span className="text-indigo-700 font-mono">{liveEditDemandEst.pMin}–{liveEditDemandEst.pMax} pax ({liveEditDemandEst.occupancyRate}%)</span>
-                                </div>
-                                <div className="text-[8px] font-semibold text-slate-700 bg-slate-50 p-0.5 px-1 rounded block mt-0.5 max-w-max">
-                                  {liveEditDemandEst.timeLabel}
-                                </div>
-                                <p className="text-[9px] text-slate-400 leading-tight italic pt-0.5">{liveEditDemandEst.explanation}</p>
-                              </div>
-                            )}
-
-                            <div className="flex gap-2 justify-end pt-1">
-                              <button
-                                type="button"
-                                onClick={() => setEditingScheduleId(null)}
-                                className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold"
-                              >
-                                Cancelar
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleUpdateScheduleSubmit(sched.id)}
-                                className="px-3.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-bold"
-                              >
-                                Salvar
-                              </button>
+                            <div className="flex justify-between items-baseline font-bold">
+                              <span className="text-slate-500 font-medium font-sans">Ocupação Média Est.:</span>
+                              <span className="text-indigo-700 font-mono">{liveDemandEst.occupancyRate}%</span>
                             </div>
+                            <div className="text-[9px] font-bold text-slate-700 bg-white/90 p-1 px-1.5 rounded border border-indigo-150/40 text-[9px] inline-block mt-0.5">
+                              🏷️ {liveDemandEst.timeLabel}
+                            </div>
+                            <p className="text-[9px] leading-relaxed text-slate-500 font-medium pt-1 border-t border-indigo-150/20">
+                              {liveDemandEst.explanation}
+                            </p>
                           </div>
                         );
-                      }
+                      })()}
 
-                      // Ordinary read-only card with evaluations
-                      const est = getScheduleDemandEstimation(sched.lineId, sched.departureTime, sched.frequency, sched.id, sched.serviceType || line.serviceType);
+                      <button
+                        type="submit"
+                        className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-sm flex items-center justify-center gap-1.5"
+                        id="btn-add-schedule"
+                      >
+                        <Plus size={14} /> Confirmar & Adicionar Horário
+                      </button>
+                    </form>
+                  </div>
 
-                      return (
-                        <div
-                          key={sched.id}
-                          className="p-3.5 bg-white border border-slate-200 hover:border-slate-300 rounded-xl relative group flex flex-col gap-2 shadow-xs"
-                        >
-                          <div className="flex justify-between items-center">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="py-0.5 px-2 bg-blue-50 text-blue-700 border border-blue-100 rounded font-mono font-bold text-xs">
-                                {sched.departureTime}
-                              </span>
-                              <span className="text-[10px] uppercase font-bold bg-slate-50 border border-slate-200 py-0.5 px-1.5 rounded text-slate-500 font-mono">
-                                {sched.frequency === 'diaria' ? 'Diário' : sched.frequency}
-                              </span>
-                              <span className={`text-[9.5px] uppercase font-bold py-0.5 px-1.5 rounded border ${
-                                (sched.serviceType || line.serviceType) === 'leito'
-                                  ? 'bg-purple-50 text-purple-700 border-purple-200'
-                                  : (sched.serviceType || line.serviceType) === 'executivo'
-                                  ? 'bg-blue-50 text-blue-700 border-blue-200'
-                                  : 'bg-slate-50 text-slate-600 border-slate-200'
-                              }`}>
-                                {(sched.serviceType || line.serviceType) === 'convencional' ? '🚌 Convencional' : (sched.serviceType || line.serviceType) === 'executivo' ? '🌟 Executivo' : '💤 Leito'}
-                              </span>
-                            </div>
+                  {/* Operational Agenda / Existing Schedules list */}
+                  <div className="space-y-3">
+                    <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider block">Agenda Operacional Existente ({lineScheds.length})</span>
 
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                onClick={() => {
-                                  setEditingScheduleId(sched.id);
-                                  setEditDepartureTime(sched.departureTime);
-                                  setEditFrequency(sched.frequency);
-                                  setEditServiceType(sched.serviceType || line.serviceType || 'convencional');
-                                  setEditSchedError('');
-                                }}
-                                className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded p-1 transition-colors cursor-pointer"
-                                title="Editar horário"
+                    {lineScheds.length === 0 ? (
+                      <div className="p-8 text-center bg-slate-50 border border-slate-150 border-dashed rounded-lg">
+                        <p className="text-slate-455 text-[11px]">Nenhum horário cadastrado para esta linha ainda.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {lineScheds.map((sched) => {
+                          const check = checkScheduleFeasibility(sched, line);
+
+                          // In-place editing schedule block
+                          if (editingScheduleId === sched.id) {
+                            const liveEditDemandEst = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(editDepartureTime)
+                              ? getScheduleDemandEstimation(sched.lineId, editDepartureTime, editFrequency, sched.id, editServiceType)
+                              : null;
+
+                            return (
+                              <div
+                                key={sched.id}
+                                className="p-4 bg-indigo-50/40 border border-indigo-400 rounded-xl space-y-3 shadow-sm"
                               >
-                                <Edit2 size={11} />
-                              </button>
-                              <button
-                                onClick={() => onDeleteSchedule(sched.id)}
-                                className="text-slate-400 hover:text-rose-500 hover:bg-rose-50 rounded p-1 transition-colors cursor-pointer"
-                                title="Remover horário"
-                              >
-                                <Trash2 size={11} />
-                              </button>
-                            </div>
-                          </div>
+                                <div className="flex justify-between items-center">
+                                  <span className="text-[10px] uppercase font-black text-indigo-700 flex items-center gap-1">
+                                    <Edit2 size={11} /> Ajustar Horário
+                                  </span>
+                                  <span className="text-[9px] text-slate-400 font-mono">ID: {sched.id}</span>
+                                </div>
 
-                          {/* Live Dynamic demand helper evaluation */}
-                          {est && (
-                            <div className="text-[10px] text-slate-600 bg-slate-50/55 border border-slate-100 p-2 rounded-lg flex flex-col gap-1">
-                              <div className="flex justify-between items-baseline">
-                                <span className="font-semibold text-slate-500">Demanda Projetada:</span>
-                                <span className="font-mono font-bold text-indigo-700">{est.pMin}–{est.pMax} pax ({est.occupancyRate}% Ocupação)</span>
+                                {editSchedError && (
+                                  <div className="p-2.5 bg-rose-50 border border-rose-150 text-rose-700 rounded text-[10px] font-bold">
+                                    {editSchedError}
+                                  </div>
+                                )}
+
+                                <div className="grid grid-cols-3 gap-2">
+                                  <div className="space-y-1">
+                                    <label className="text-[8px] text-slate-400 font-bold block uppercase tracking-wider">Horário (HH:MM)</label>
+                                    <input
+                                      type="text"
+                                      value={editDepartureTime}
+                                      onChange={(e) => setEditDepartureTime(e.target.value)}
+                                      maxLength={5}
+                                      className="w-full text-center px-2 py-1 bg-white border border-slate-200 rounded font-bold text-xs text-slate-800 font-mono"
+                                    />
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[8px] text-slate-400 font-bold block uppercase tracking-wider">Frequência</label>
+                                    <select
+                                      value={editFrequency}
+                                      onChange={(e) => setEditFrequency(e.target.value as ScheduleFrequency)}
+                                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-850 focus:outline-none"
+                                    >
+                                      <option value="diaria">Saídas Diárias</option>
+                                      <option value="seg-sex">Segunda a Sexta</option>
+                                      <option value="fds">Finais de Semana</option>
+                                      <option value="semanal">Semanal</option>
+                                    </select>
+                                  </div>
+                                  <div className="space-y-1">
+                                    <label className="text-[8px] text-slate-400 font-bold block uppercase tracking-wider">Serviço</label>
+                                    <select
+                                      value={editServiceType}
+                                      onChange={(e) => setEditServiceType(e.target.value as ServiceType)}
+                                      className="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs text-slate-850 font-bold focus:outline-none"
+                                    >
+                                      <option value="convencional">🚌 Convencional</option>
+                                      <option value="executivo">🌟 Executivo</option>
+                                      <option value="leito">💤 Leito</option>
+                                    </select>
+                                  </div>
+                                </div>
+
+                                {/* Dynamic forecasting under Editing */}
+                                {liveEditDemandEst && (
+                                  <div className="p-2.5 bg-white border border-indigo-100 rounded-lg text-[10.5px] space-y-1">
+                                    <div className="flex justify-between font-bold">
+                                      <span className="text-slate-500 font-sans">Ocupação Corrigida:</span>
+                                      <span className="text-indigo-700 font-mono">{liveEditDemandEst.pMin}–{liveEditDemandEst.pMax} pax ({liveEditDemandEst.occupancyRate}%)</span>
+                                    </div>
+                                    <div className="text-[8px] font-semibold text-slate-700 bg-slate-50 p-0.5 px-1 rounded block mt-0.5 max-w-max">
+                                      {liveEditDemandEst.timeLabel}
+                                    </div>
+                                    <p className="text-[9px] text-slate-400 leading-tight italic pt-0.5">{liveEditDemandEst.explanation}</p>
+                                  </div>
+                                )}
+
+                                <div className="flex gap-2 justify-end pt-1">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingScheduleId(null)}
+                                    className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold cursor-pointer font-sans"
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleUpdateScheduleSubmit(sched.id)}
+                                    className="px-3.5 py-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded text-[10px] font-bold cursor-pointer font-sans"
+                                  >
+                                    Salvar
+                                  </button>
+                                </div>
                               </div>
-                              <p className="text-[8.5px] leading-relaxed text-slate-450 italic pt-0.5 border-t border-slate-100">
-                                {est.explanation}
-                              </p>
-                            </div>
-                          )}
+                            );
+                          }
 
-                          {/* Pre-scale conflict checker feedback */}
-                          <div className={`flex gap-1.5 items-start mt-0.5 p-2 rounded border text-[10px] ${
-                            check.level === 'warning'
-                              ? 'bg-rose-50 border-rose-100 text-rose-700'
-                              : check.level === 'info'
-                              ? 'bg-amber-50 border-amber-100 text-amber-700'
-                              : 'bg-emerald-50 border-emerald-100 text-emerald-700'
-                          }`}>
-                            {check.level === 'warning' ? (
-                              <AlertTriangle size={12} className="text-rose-550 flex-shrink-0 mt-0.5" />
-                            ) : check.level === 'info' ? (
-                              <AlertTriangle size={12} className="text-amber-550 flex-shrink-0 mt-0.5" />
-                            ) : (
-                              <Check size={12} className="text-emerald-500 flex-shrink-0 mt-0.5" />
-                            )}
-                            <div className="leading-snug">
-                              {check.message}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })
-                )}
-              </div>
+                          // Ordinary read-only card layout
+                          const est = getScheduleDemandEstimation(sched.lineId, sched.departureTime, sched.frequency, sched.id, sched.serviceType || line.serviceType);
 
+                          return (
+                            <div
+                              key={sched.id}
+                              className="p-3.5 bg-white border border-slate-200 hover:border-slate-300 rounded-xl relative group flex flex-col gap-2 shadow-xs transition-all"
+                            >
+                              <div className="flex justify-between items-center">
+                                <div className="flex items-center gap-2 flex-wrap text-slate-800">
+                                  <span className="py-0.5 px-2 bg-blue-50 text-blue-700 border border-blue-105 rounded font-mono font-bold text-xs">
+                                    {sched.departureTime}
+                                  </span>
+                                  <span className="text-[10px] uppercase font-bold bg-slate-50 border border-slate-200 py-0.5 px-1.5 rounded text-slate-550 font-mono">
+                                    {sched.frequency === 'diaria' ? 'Diário' : sched.frequency}
+                                  </span>
+                                  <span className={`text-[9.5px] uppercase font-bold py-0.5 px-1.5 rounded border ${
+                                    (sched.serviceType || line.serviceType || 'convencional') === 'leito'
+                                      ? 'bg-purple-100 text-purple-700 border-purple-200'
+                                      : (sched.serviceType || line.serviceType || 'convencional') === 'executivo'
+                                      ? 'bg-blue-100 text-blue-700 border-blue-200'
+                                      : 'bg-slate-100 text-slate-600 border-slate-200'
+                                  }`}>
+                                    {(sched.serviceType || line.serviceType || 'convencional') === 'convencional' ? '🚌 Convencional' : (sched.serviceType || line.serviceType || 'convencional') === 'executivo' ? '🌟 Executivo' : '💤 Leito'}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    onClick={() => {
+                                      setEditingScheduleId(sched.id);
+                                      setEditDepartureTime(sched.departureTime);
+                                      setEditFrequency(sched.frequency);
+                                      setEditServiceType(sched.serviceType || line.serviceType || 'convencional');
+                                      setEditSchedError('');
+                                    }}
+                                    className="text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded p-1 transition-colors cursor-pointer"
+                                    title="Editar horário"
+                                  >
+                                    <Edit2 size={12} />
+                                  </button>
+                                  <button
+                                    onClick={() => onDeleteSchedule(sched.id)}
+                                    className="text-slate-400 hover:text-rose-500 hover:bg-rose-550 rounded p-1 transition-colors cursor-pointer"
+                                    title="Remover horário"
+                                  >
+                                    <Trash2 size={12} />
+                                  </button>
+                                </div>
+                              </div>
+
+                              {est && (
+                                <div className="text-[10px] text-slate-600 bg-slate-50/55 border border-slate-100 p-2 rounded-lg flex flex-col gap-1">
+                                  <div className="flex justify-between items-baseline">
+                                    <span className="font-semibold text-slate-500 font-sans">Demanda Projetada:</span>
+                                    <span className="font-mono font-bold text-indigo-700">{est.pMin}–{est.pMax} pax ({est.occupancyRate}% Ocupação)</span>
+                                  </div>
+                                  <p className="text-[8.5px] leading-relaxed text-slate-450 italic pt-0.5 border-t border-slate-100">
+                                    {est.explanation}
+                                  </p>
+                                </div>
+                              )}
+
+                              <div className={`flex gap-1.5 items-start p-2 rounded border text-[10px] ${
+                                check.level === 'warning'
+                                  ? 'bg-rose-50 border-rose-100 text-rose-700'
+                                  : check.level === 'info'
+                                  ? 'bg-amber-50 border-amber-100 text-amber-700'
+                                  : 'bg-emerald-50 border-emerald-100 text-emerald-700'
+                              }`}>
+                                {check.level === 'warning' ? (
+                                  <AlertTriangle size={12} className="text-rose-550 flex-shrink-0 mt-0.5" />
+                                ) : check.level === 'info' ? (
+                                  <AlertTriangle size={12} className="text-amber-550 flex-shrink-0 mt-0.5" />
+                                ) : (
+                                  <Check size={12} className="text-emerald-500 flex-shrink-0 mt-0.5" />
+                                )}
+                                <div className="leading-snug font-medium font-sans">
+                                  {check.message}
+                                </div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+
+                </div>
+
+              </motion.div>
             </div>
-          )}
-        </div>
-
-      </div>
+          );
+        })()}
+      </AnimatePresence>
     </div>
   );
 }
