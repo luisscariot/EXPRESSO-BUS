@@ -4,12 +4,20 @@ import * as schema from './schema.ts';
 
 const { Pool } = pkg;
 
+export const isDatabaseUrlValid = (url: string | undefined): boolean => {
+  if (!url) return false;
+  const trimmed = url.trim();
+  if (trimmed === "" || trimmed === "undefined" || trimmed === "null") return false;
+  if (trimmed.includes("[YOUR") || trimmed.includes("YOUR-PASSWORD") || trimmed.includes("YOUR_PASSWORD") || trimmed.includes("PLACEHOLDER")) return false;
+  return true;
+};
+
 export const createPool = () => {
   const connectionString = process.env.DATABASE_URL;
-  if (connectionString) {
+  if (isDatabaseUrlValid(connectionString)) {
     return new Pool({
       connectionString,
-      ssl: connectionString.includes('supabase') || connectionString.includes('neon') || connectionString.includes('render')
+      ssl: connectionString!.includes('supabase') || connectionString!.includes('neon') || connectionString!.includes('render')
         ? { rejectUnauthorized: false }
         : undefined,
       connectionTimeoutMillis: 15000,
