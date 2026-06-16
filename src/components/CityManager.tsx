@@ -57,73 +57,16 @@ export default function CityManager({ cities, partners, fleet, simTime, onAddCit
   const [latitude, setLatitude] = useState('');
   const [longitude, setLongitude] = useState('');
 
-  const [loadingAI, setLoadingAI] = useState(false);
-
-  const fetchRealCityInfo = async () => {
-    if (!name.trim() || !stateName.trim()) {
-      setError('Por favor, digite o Nome da Cidade e o Estado/UF para buscar as informações na IA.');
-      return;
-    }
-    setLoadingAI(true);
-    setError('');
-
-    // Pre-check exact matched database on client-side for lightning-fast high precision bypass
-    const normInput = name.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "").replace(/[^a-z0-9]/g, "");
-    const matched = REAL_CITIES_COORDS_DB[normInput];
-    if (matched) {
-      setTimeout(() => {
-        setLatitude(String(matched.lat));
-        setLongitude(String(matched.lon));
-        setPopulation(String(matched.population));
-        setAttractiveness(matched.attractiveness);
-        setVocation(matched.vocation);
-        setInfo(`Localização geográfica confirmada com coordenadas de precisão real (${matched.lat}, ${matched.lon}). Excelente polo comercial para expansão.`);
-        setLoadingAI(false);
-      }, 400);
-      return;
-    }
-
-    try {
-      const response = await fetch('/api/city-info', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cityName: name.trim(),
-          stateName: stateName.trim(),
-          country: country.trim(),
-          existingCities: cities.map(c => ({ name: c.name, state: c.state, latitude: c.latitude, longitude: c.longitude }))
-        })
-      });
-      if (!response.ok) {
-        throw new Error('Falha ao obter dados da cidade na API.');
-      }
-      const data = await response.json();
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      setLatitude(data.latitude ? String(data.latitude) : '');
-      setLongitude(data.longitude ? String(data.longitude) : '');
-      setPopulation(data.population ? String(data.population) : '250000');
-      setAttractiveness(data.attractiveness ?? 50);
-      setVocation(data.vocation ?? 'interior');
-      if (data.additionalInfo) {
-        setInfo(data.additionalInfo);
-      }
-    } catch (err: any) {
-      console.error(err);
-      setError('Erro ao carregar dados reais da cidade: ' + (err.message || err));
-    } finally {
-      setLoadingAI(false);
-    }
-  };
+  // Local placement and distances without AI dependencies
+  const [refCityId, setRefCityId] = useState('');
+  const [distanceKm, setDistanceKm] = useState('150');
+  const [direction, setDirection] = useState<'norte' | 'nordeste' | 'leste' | 'sudeste' | 'sul' | 'sudoeste' | 'oeste' | 'noroeste'>('leste');
 
   React.useEffect(() => {
-    if (showAddForm) {
-      setLatitude('');
-      setLongitude('');
+    if (showAddForm && cities.length > 0 && !refCityId) {
+      setRefCityId(cities[0].id);
     }
-  }, [showAddForm]);
+  }, [showAddForm, cities, refCityId]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -147,15 +90,49 @@ export default function CityManager({ cities, partners, fleet, simTime, onAddCit
       return;
     }
 
-    // Precise coordinates lookup logic under submission in case AI failed/skipped
+    // Calculate coordinates based on reference city/distance/direction
+    let finalLat = parseFloat((-22.5 - Math.random() * 3).toFixed(4));
+    let finalLon = parseFloat((-46.5 - Math.random() * 3).toFixed(4));
+    let autoInfo = 'Polo operacional ativado.';
+
+    // Pre-check exact matched database on client-side
     const normInput = name.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "").replace(/[^a-z0-9]/g, "");
     const matched = REAL_CITIES_COORDS_DB[normInput];
 
-    const finalLat = latitude ? parseFloat(latitude) : (matched ? matched.lat : parseFloat((-20 - Math.random() * 4).toFixed(4)));
-    const finalLon = longitude ? parseFloat(longitude) : (matched ? matched.lon : parseFloat((-46 - Math.random() * 5).toFixed(4)));
-    const finalPop = population ? parseInt(population, 10) : (matched ? matched.population : 250000);
-    const finalVoc = vocation && vocation !== 'interior' ? vocation : (matched ? matched.vocation : vocation);
-    const finalAttr = attractiveness !== 50 ? attractiveness : (matched ? matched.attractiveness : attractiveness);
+    if (matched) {
+      finalLat = matched.lat;
+      finalLon = matched.lon;
+      autoInfo = `Localização real encontrada para ${name.trim()}.`;
+    } else if (cities.length > 0) {
+      const refCity = cities.find(c => c.id === refCityId) || cities[0];
+      const refLat = refCity.latitude ?? -22.5;
+      const refLon = refCity.longitude ?? -46.5;
+      const distKm = parseFloat(distanceKm) || 150;
+
+      let angleRad = 0;
+      switch (direction) {
+        case 'norte': angleRad = Math.PI / 2; break;
+        case 'nordeste': angleRad = Math.PI / 4; break;
+        case 'leste': angleRad = 0; break;
+        case 'sudeste': angleRad = -Math.PI / 4; break;
+        case 'sul': angleRad = -Math.PI / 2; break;
+        case 'sudoeste': angleRad = -3 * Math.PI / 4; break;
+        case 'oeste': angleRad = Math.PI; break;
+        case 'noroeste': angleRad = 3 * Math.PI / 4; break;
+      }
+
+      const kmPerDeg = 111.19;
+      const dLat = (distKm / kmPerDeg) * Math.sin(angleRad);
+      const dLon = ((distKm / kmPerDeg) * Math.cos(angleRad)) / Math.cos(refLat * Math.PI / 180.0);
+
+      finalLat = parseFloat((refLat + dLat).toFixed(4));
+      finalLon = parseFloat((refLon + dLon).toFixed(4));
+      autoInfo = `Polo cadastrado a ${distKm} KM (direção ${direction.toUpperCase()}) de ${refCity.name}.`;
+    }
+
+    const finalPop = parseInt(population, 10) || 250000;
+    const finalAttr = attractiveness;
+    const finalVoc = vocation;
 
     const newCity: City = {
       id: `c_${Math.random().toString(36).substring(2, 9)}`,
@@ -167,11 +144,11 @@ export default function CityManager({ cities, partners, fleet, simTime, onAddCit
       population: finalPop,
       attractiveness: finalAttr,
       vocation: finalVoc,
-      additionalInfo: info.trim() || (matched ? `Cidade mapeada com sucesso na base geográfica. Excelentes rotas intermunicipais.` : ''),
+      additionalInfo: info.trim() || autoInfo,
     };
 
-    const newPartner = generatePartnerCompany(newCity);
-    onAddCity(newCity, [newPartner]);
+    // ao criar cidade, não será mais necessário a criação de empresas parceiras
+    onAddCity(newCity, []);
     
     // Reset
     setName('');
@@ -180,6 +157,8 @@ export default function CityManager({ cities, partners, fleet, simTime, onAddCit
     setPopulation('250000');
     setAttractiveness(50);
     setVocation('interior');
+    setDistanceKm('150');
+    setDirection('leste');
     setShowAddForm(false);
     setError('');
   };  return (
@@ -190,10 +169,10 @@ export default function CityManager({ cities, partners, fleet, simTime, onAddCit
         <div>
           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
             <Globe className="text-blue-600" size={20} />
-            Cidades & Empresas Parceiras
+            Cidades & Polos Operacionais
           </h2>
           <p className="text-slate-500 text-xs mt-1">
-            Cadastre novas cidades para expandir sua infraestrutura. Cada nova cidade gera empresas parceiras para cooperação operacional de frota.
+            Cadastre novas cidades para expandir sua infraestrutura. Defina a vocação socioeconômica e distâncias para simular a demanda real de passageiros sem precisar de chaves externas de IA.
           </p>
         </div>
 
@@ -208,8 +187,11 @@ export default function CityManager({ cities, partners, fleet, simTime, onAddCit
       </div>
 
       {showAddForm && (
-        <form onSubmit={handleSubmit} className="p-6 bg-white rounded-xl border border-slate-200 shadow-sm space-y-4">
-          <h3 className="text-sm font-bold text-slate-850 uppercase tracking-wider">Nova Interface de Cidade</h3>
+        <form onSubmit={handleSubmit} className="p-6 bg-white rounded-xl border border-slate-200 shadow-sm space-y-5">
+          <div className="flex items-center gap-2 pb-1 border-b border-slate-100">
+            <MapPin className="text-blue-600" size={16} />
+            <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Novo Polo Operacional (Cidade)</h3>
+          </div>
           
           {error && (
             <div className="p-3 bg-rose-50 border border-rose-150 text-rose-700 rounded-lg text-xs">
@@ -217,20 +199,22 @@ export default function CityManager({ cities, partners, fleet, simTime, onAddCit
             </div>
           )}
 
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-            <div className="md:col-span-5 space-y-1">
+          {/* Grid 1: Basic Info */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+            <div className="md:col-span-6 space-y-1">
               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Nome da Cidade</label>
               <input
                 type="text"
-                placeholder="Ex: São Paulo, Campinas, Porto Alegre"
+                placeholder="Ex: São Paulo, Campinas, Rio de Janeiro"
                 value={name}
                 onChange={(e) => { setName(e.target.value); setError(''); }}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
                 id="input-city-name-field"
+                required
               />
             </div>
             
-            <div className="md:col-span-2 space-y-1">
+            <div className="md:col-span-3 space-y-1">
               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Estado / UF</label>
               <input
                 type="text"
@@ -238,47 +222,132 @@ export default function CityManager({ cities, partners, fleet, simTime, onAddCit
                 value={stateName}
                 onChange={(e) => { setStateName(e.target.value); setError(''); }}
                 maxLength={4}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 uppercase text-center focus:outline-none focus:border-blue-500"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 uppercase text-center focus:outline-none focus:border-blue-500 font-mono font-bold"
                 id="input-city-state-field"
+                required
               />
             </div>
 
-            <div className="md:col-span-2 space-y-1">
+            <div className="md:col-span-3 space-y-1">
               <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">País</label>
               <input
                 type="text"
                 placeholder="Ex: Brasil"
                 value={country}
                 onChange={(e) => setCountry(e.target.value)}
-                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-medium"
                 id="input-city-country-field"
               />
             </div>
+          </div>
 
-            <div className="md:col-span-3">
-              <button
-                type="button"
-                onClick={fetchRealCityInfo}
-                disabled={loadingAI}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 disabled:from-slate-150 disabled:to-slate-200 disabled:text-slate-400 text-white rounded-lg text-xs font-bold cursor-pointer shadow-sm hover:shadow-indigo-500/10 transition-all h-[36px]"
+          {/* Grid 2: Demand Simulation Params */}
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-4 bg-slate-50/50 p-4 rounded-xl border border-slate-100">
+            <div className="md:col-span-4 space-y-1">
+              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Vocação Socioeconômica & Demanda</label>
+              <select
+                value={vocation}
+                onChange={(e: any) => setVocation(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                id="select-city-vocation"
               >
-                {loadingAI ? (
-                  <>
-                    <span className="w-3.5 h-3.5 border-2 border-slate-400 border-t-white rounded-full animate-spin" />
-                    Buscando...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles size={13} className="text-amber-300 fill-amber-300 animate-pulse" />
-                    Buscar Dados (IA)
-                  </>
-                )}
-              </button>
+                <option value="interior">🌳 Interior (Média/Pequena, comércio local)</option>
+                <option value="metropole">🏙️ Metrópole (Grande capital, altíssimo fluxo)</option>
+                <option value="turismo">🏝️ Turismo (Polo praiano/lazer, alta sazonalidade)</option>
+                <option value="industrial">🏭 Industrial (Polos de tecnologia e negócios)</option>
+              </select>
+            </div>
+
+            <div className="md:col-span-4 space-y-1">
+              <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">População Estimada</label>
+              <input
+                type="number"
+                placeholder="Ex: 250000"
+                value={population}
+                onChange={(e) => setPopulation(e.target.value)}
+                className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-mono"
+                id="input-city-pop"
+              />
+            </div>
+
+            <div className="md:col-span-4 space-y-1">
+              <div className="flex justify-between items-center">
+                <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Atratividade de Tráfego</label>
+                <span className="text-[10px] font-bold text-blue-600 font-mono bg-blue-50 px-1.5 rounded">{attractiveness}/100</span>
+              </div>
+              <input
+                type="range"
+                min="10"
+                max="100"
+                value={attractiveness}
+                onChange={(e) => setAttractiveness(parseInt(e.target.value, 10))}
+                className="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-blue-600 mt-2.5"
+                id="range-city-attractive"
+              />
             </div>
           </div>
 
+          {/* Grid 3: Distance & Location Math (only runs if there's already at least 1 city) */}
+          {cities.length > 0 && (
+            <div className="space-y-3 bg-blue-50/25 p-4 rounded-xl border border-blue-100/40">
+              <div className="flex items-center gap-1.5">
+                <Clock className="text-blue-600" size={13} />
+                <h4 className="text-[10px] font-bold text-blue-800 uppercase tracking-wider">Configuração Geográfica & Distância das Rotas</h4>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                <div className="md:col-span-4 space-y-1">
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider">Cidade de Referência</label>
+                  <select
+                    value={refCityId}
+                    onChange={(e) => setRefCityId(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                  >
+                    {cities.map(c => (
+                      <option key={c.id} value={c.id}>{c.name} ({c.state})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="md:col-span-4 space-y-1">
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider">Distância em Linha Rodoviária (KM)</label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="2000"
+                    placeholder="Distância em KM"
+                    value={distanceKm}
+                    onChange={(e) => setDistanceKm(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500 font-mono font-bold"
+                  />
+                </div>
+
+                <div className="md:col-span-4 space-y-1">
+                  <label className="block text-[9px] font-bold text-slate-500 uppercase tracking-wider">Direção Geográfica no Mapa</label>
+                  <select
+                    value={direction}
+                    onChange={(e: any) => setDirection(e.target.value)}
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-xs text-slate-800 focus:outline-none focus:border-blue-500"
+                  >
+                    <option value="leste">➡️ Leste (Litoral / Direita)</option>
+                    <option value="oeste">⬅️ Oeste (Interior / Esquerda)</option>
+                    <option value="norte">⬆️ Norte (Acima)</option>
+                    <option value="sul">⬇️ Sul (Abaixo)</option>
+                    <option value="nordeste">↗️ Nordeste (Cima / Direita)</option>
+                    <option value="sudeste">↘️ Sudeste (Baixo / Direita)</option>
+                    <option value="noroeste">↖️ Noroeste (Cima / Esquerda)</option>
+                    <option value="sudoeste">↙️ Sudoeste (Baixo / Esquerda)</option>
+                  </select>
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-400 italic">
+                A distância definida será usada proporcionalmente para simular o tempo de estrada e consumo de combustível nas novas linhas operadas.
+              </p>
+            </div>
+          )}
+
           <div className="space-y-1">
-            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Informações Opcionais / Terminal</label>
+            <label className="block text-[10px] font-bold text-slate-500 uppercase tracking-wider">Informações Opcionais / Terminal (Aparece no Painel)</label>
             <input
               type="text"
               placeholder="Ex: Terminal Rodoviário Tietê, plataforma central..."
@@ -289,11 +358,7 @@ export default function CityManager({ cities, partners, fleet, simTime, onAddCit
             />
           </div>
 
-          <p className="text-[10px] text-blue-600 bg-blue-50/60 p-2.5 rounded-lg border border-blue-105/50 leading-relaxed">
-            💡 <strong>Plano Inteligente:</strong> A geolocalização exata, a população real e o perfil socioeconômico de atratividade desta cidade serão obtidos e calculados de forma automática em tempo real através de dados de satélite da nossa Inteligência Artificial integrando o mapa.
-          </p>
-
-          <div className="flex gap-2 justify-end pt-2">
+          <div className="flex gap-2 justify-end pt-2 border-t border-slate-100">
             <button
               type="button"
               onClick={() => { setShowAddForm(false); setError(''); }}

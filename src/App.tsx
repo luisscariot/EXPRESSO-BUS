@@ -203,11 +203,9 @@ export default function App() {
         additionalInfo: `Sede Central da ${setup.name}. Polo operacional principal ativado.`
       };
 
-      const firstPartner = generatePartnerCompany(firstCity);
-
       setCompany(activeCompany);
       setCities([firstCity]);
-      setPartners([firstPartner]);
+      setPartners([]);
       setFleet([]);
       setLines([]);
       setSchedules([]);
