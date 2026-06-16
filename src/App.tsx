@@ -9,6 +9,7 @@ import LineManager from './components/LineManager';
 import OpsDashboard from './components/OpsDashboard';
 import DemandProjection from './components/DemandProjection';
 import CompletedTrips from './components/CompletedTrips';
+import UserAuthSection from './components/UserAuthSection';
 import { calculateProjectedPassengers, getDayOfWeekName, generateStopDetails } from './utils/demandHelper';
 import {
   Bus as BusIcon, Globe, Map, Sparkles, LogOut, LayoutDashboard, Settings2, ShieldCheck, Heart, AlertTriangle, Trash2, TrendingUp, Clock, Pause, Play, FastForward, RefreshCw, CheckCircle2
@@ -26,7 +27,10 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const [partners, setPartners] = useState<PartnerCompany[]>([]);
+  const [partners, setPartners] = useState<PartnerCompany[]>(() => {
+    const saved = localStorage.getItem('expb_partners');
+    return saved ? JSON.parse(saved) : [];
+  });
 
   const [accumulatedPassengers, setAccumulatedPassengers] = useState<Record<string, number>>(() => {
     const saved = localStorage.getItem('expb_accumulated_passengers');
@@ -1320,6 +1324,8 @@ export default function App() {
                 {trips.filter(t => t.status === 'em_curso').length} / {fleet.length} active
               </p>
             </div>
+
+            <UserAuthSection />
           </div>
         </header>
 

@@ -1,8 +1,12 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
+import { requireAuth, AuthRequest } from "./src/middleware/auth.ts";
+import { getOrCreateUser } from "./src/db/users.ts";
+import { db } from "./src/db/index.ts";
+import { users } from "./src/db/schema.ts";
 
 dotenv.config();
 
@@ -16,6 +20,37 @@ async function startServer() {
   // API router
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // User synchronization endpoint
+  app.post("/api/auth/sync", requireAuth, async (req: AuthRequest, res) => {
+    try {
+      const uid = req.user?.uid;
+      const email = req.user?.email || "";
+      const name = req.user?.name || req.body.name || "";
+      const photoUrl = req.user?.picture || req.body.photoUrl || "";
+
+      if (!uid) {
+        return res.status(401).json({ error: "UID de usuário do Firebase ausente." });
+      }
+
+      const dbUser = await getOrCreateUser(uid, email, name, photoUrl);
+      res.json({ success: true, user: dbUser });
+    } catch (error: any) {
+      console.error("Erro ao sincronizar usuário:", error);
+      res.status(500).json({ error: error.message || "Erro no servidor ao sincronizar usuário." });
+    }
+  });
+
+  // Fetch all registered users
+  app.get("/api/users", async (req, res) => {
+    try {
+      const registeredUsers = await db.select().from(users);
+      res.json({ users: registeredUsers });
+    } catch (error: any) {
+      console.error("Erro ao carregar usuários:", error);
+      res.status(500).json({ error: "Erro interno ao carregar a lista de usuários." });
+    }
   });
 
   // Predefined high-precision database for popular Brazilian cities
@@ -71,7 +106,16 @@ async function startServer() {
         });
       }
 
-      if (!process.env.GEMINI_API_KEY) {
+      const key = process.env.GEMINI_API_KEY;
+      const isKeyMissingOrPlaceholder = !key || 
+        key.trim() === "" || 
+        key.trim() === "undefined" || 
+        key.trim() === "null" || 
+        key.startsWith("YOUR_") || 
+        key.includes("PLACEHOLDER") ||
+        key === "KEY_HERE";
+
+      if (isKeyMissingOrPlaceholder) {
         // Fallback with approximate values if key is missing to prevent breaking startup
         console.warn("GEMINI_API_KEY is not defined. Using approximate fallback.");
         const mockLat = -22.9 - (Math.random() * 4);
@@ -82,12 +126,12 @@ async function startServer() {
           population: 150000,
           attractiveness: 60,
           vocation: "interior",
-          additionalInfo: `Cidade ${cityName} (${stateName}) adicionada através de aproximação sem chave de API ativa.`
+          additionalInfo: `Cidade ${cityName} (${stateName}) adicionada através de aproximação regional (sem chave de API ativa).`
         });
       }
 
       const ai = new GoogleGenAI({
-        apiKey: process.env.GEMINI_API_KEY,
+        apiKey: key,
         httpOptions: {
           headers: {
             'User-Agent': 'aistudio-build',
@@ -118,14 +162,14 @@ Escreva uma descrição com essas distâncias aproximadas em português no campo
           temperature: 0.1,
           responseMimeType: "application/json",
           responseSchema: {
-            type: "OBJECT" as any,
+            type: Type.OBJECT,
             properties: {
-              latitude: { type: "NUMBER" },
-              longitude: { type: "NUMBER" },
-              population: { type: "INTEGER" },
-              attractiveness: { type: "INTEGER" },
-              vocation: { type: "STRING" },
-              additionalInfo: { type: "STRING" }
+              latitude: { type: Type.NUMBER },
+              longitude: { type: Type.NUMBER },
+              population: { type: Type.INTEGER },
+              attractiveness: { type: Type.INTEGER },
+              vocation: { type: Type.STRING },
+              additionalInfo: { type: Type.STRING }
             },
             required: ["latitude", "longitude", "population", "attractiveness", "vocation", "additionalInfo"]
           }
@@ -144,8 +188,9 @@ Escreva uma descrição com essas distâncias aproximadas em português no campo
       // Construct plausible fallback data to avoid blocking the user flow
       const mockLat = -15.0 - (Math.random() * 10); // Latitude in Brazil
       const mockLon = -47.0 - (Math.random() * 8); // Longitude in Brazil
-      const cityName = req.body.cityName || "Cidade";
-      const stateName = req.body.stateName || "UF";
+      const body = req.body || {};
+      const cityName = body.cityName || "Cidade";
+      const stateName = body.stateName || "UF";
       
       const lowCity = cityName.toLowerCase();
       let estVocation = "interior";
