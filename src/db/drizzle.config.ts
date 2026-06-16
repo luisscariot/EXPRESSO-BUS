@@ -8,7 +8,7 @@ const isDatabaseUrlValid = (url: string | undefined): boolean => {
   const trimmed = url.trim();
   if (trimmed === "" || trimmed === "undefined" || trimmed === "null") return false;
   if (trimmed.includes("[YOUR") || trimmed.includes("YOUR-PASSWORD") || trimmed.includes("YOUR_PASSWORD") || trimmed.includes("PLACEHOLDER")) return false;
-  return true;
+  return trimmed.startsWith("postgres://") || trimmed.startsWith("postgresql://");
 };
 
 const databaseUrl = process.env.DATABASE_URL;
