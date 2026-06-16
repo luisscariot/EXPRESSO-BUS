@@ -170,7 +170,8 @@ export default function CityManager({ cities, partners, fleet, simTime, onAddCit
       additionalInfo: info.trim() || (matched ? `Cidade mapeada com sucesso na base geográfica. Excelentes rotas intermunicipais.` : ''),
     };
 
-    onAddCity(newCity, []);
+    const newPartner = generatePartnerCompany(newCity);
+    onAddCity(newCity, [newPartner]);
     
     // Reset
     setName('');

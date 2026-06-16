@@ -170,17 +170,44 @@ export default function App() {
       setLogs([firstLog]);
     } else {
       // Custom start
+      const hqLower = setup.hqName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "").replace(/[^a-z0-9]/g, "");
+      
+      const hqCoordsMap: Record<string, { lat: number; lon: number; pop: number; attr: number; voc: 'metropole' | 'turismo' | 'industrial' | 'interior' }> = {
+        'saopaulo': { lat: -23.5505, lon: -46.6333, pop: 12300000, attr: 95, voc: 'metropole' },
+        'riodejaneiro': { lat: -22.9068, lon: -43.1729, pop: 6748000, attr: 98, voc: 'turismo' },
+        'belohorizonte': { lat: -19.9167, lon: -43.9345, pop: 2521000, attr: 75, voc: 'industrial' },
+        'curitiba': { lat: -25.4290, lon: -49.2671, pop: 1948000, attr: 80, voc: 'metropole' },
+        'campinas': { lat: -22.9099, lon: -47.0626, pop: 1210000, attr: 75, voc: 'industrial' },
+        'santos': { lat: -23.9608, lon: -46.3331, pop: 433000, attr: 90, voc: 'turismo' },
+        'saojosedoscampos': { lat: -23.1791, lon: -45.8872, pop: 730000, attr: 70, voc: 'industrial' },
+        'sorocaba': { lat: -23.5015, lon: -47.4526, pop: 687000, attr: 65, voc: 'industrial' },
+        'ribeiraopreto': { lat: -21.1704, lon: -47.8103, pop: 711000, attr: 75, voc: 'industrial' },
+        'portoalegre': { lat: -30.0346, lon: -51.2177, pop: 1488000, attr: 85, voc: 'metropole' },
+        'brasilia': { lat: -15.7942, lon: -47.8822, pop: 3015000, attr: 80, voc: 'metropole' },
+        'goiania': { lat: -16.6869, lon: -49.2648, pop: 1532000, attr: 75, voc: 'metropole' },
+        'salvador': { lat: -12.9777, lon: -38.5016, pop: 2886000, attr: 92, voc: 'turismo' },
+      };
+
+      const matchedHq = hqCoordsMap[hqLower];
+
       const firstCity: City = {
         id: 'c_hq',
         name: setup.hqName,
         state: setup.hqState.toUpperCase(),
         country: setup.hqCountry,
-        additionalInfo: `Sede Central da ${setup.name}`
+        latitude: matchedHq ? matchedHq.lat : parseFloat((-22.5 - Math.random() * 3).toFixed(4)),
+        longitude: matchedHq ? matchedHq.lon : parseFloat((-46.5 - Math.random() * 3).toFixed(4)),
+        population: matchedHq ? matchedHq.pop : 350000,
+        attractiveness: matchedHq ? matchedHq.attr : 65,
+        vocation: matchedHq ? matchedHq.voc : 'interior',
+        additionalInfo: `Sede Central da ${setup.name}. Polo operacional principal ativado.`
       };
+
+      const firstPartner = generatePartnerCompany(firstCity);
 
       setCompany(activeCompany);
       setCities([firstCity]);
-      setPartners([]);
+      setPartners([firstPartner]);
       setFleet([]);
       setLines([]);
       setSchedules([]);
