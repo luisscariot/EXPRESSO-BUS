@@ -5,6 +5,16 @@ import * as schema from './schema.ts';
 const { Pool } = pkg;
 
 export const createPool = () => {
+  const connectionString = process.env.DATABASE_URL;
+  if (connectionString) {
+    return new Pool({
+      connectionString,
+      ssl: connectionString.includes('supabase') || connectionString.includes('neon') || connectionString.includes('render')
+        ? { rejectUnauthorized: false }
+        : undefined,
+      connectionTimeoutMillis: 15000,
+    });
+  }
   return new Pool({
     host: process.env.SQL_HOST,
     user: process.env.SQL_USER,
