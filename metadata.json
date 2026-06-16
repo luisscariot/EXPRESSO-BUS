@@ -1,6 +1,8 @@
 {
-  "name": "Expresso Bus",
-  "description": "Plataforma de gestão operacional e simulação de transporte rodoviário em tempo real.",
+  "name": "Simulador de Linhas de Ônibus",
+  "description": "Sistema completo de simulação de tráfego, agendamento de horários, dimensionamento de frotas e projeção de demanda de passageiros para múltiplas empresas de ônibus.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
 }

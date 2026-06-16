@@ -1,1601 +1,2261 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Company, City, PartnerCompany, Bus, Line, Schedule, Trip, SystemLog, TripStatus } from './types';
-import { DEMO_CITIES, DEMO_FLEET, DEMO_LINES, DEMO_SCHEDULES, DEMO_PARTNERS } from './utils/demoData';
-import { generatePartnerCompany } from './utils/generators';
-import CompanySetup from './components/CompanySetup';
-import CityManager from './components/CityManager';
-import FleetManager from './components/FleetManager';
-import LineManager from './components/LineManager';
-import OpsDashboard from './components/OpsDashboard';
-import DemandProjection from './components/DemandProjection';
-import CompletedTrips from './components/CompletedTrips';
-import UserAuthSection from './components/UserAuthSection';
-import { calculateProjectedPassengers, getDayOfWeekName, generateStopDetails } from './utils/demandHelper';
-import {
-  Bus as BusIcon, Globe, Map, Sparkles, LogOut, LayoutDashboard, Settings2, ShieldCheck, Heart, AlertTriangle, Trash2, TrendingUp, Clock, Pause, Play, FastForward, RefreshCw, CheckCircle2
+import React, { useState, useEffect } from 'react';
+import { 
+  Building2, 
+  MapPin, 
+  Bus as BusIcon, 
+  GitCommit, 
+  Calendar, 
+  TrendingUp, 
+  Database, 
+  LogOut, 
+  Trash2, 
+  AlertTriangle, 
+  Check, 
+  Play, 
+  Clock, 
+  DollarSign, 
+  Users, 
+  CalendarClock, 
+  ChevronRight,
+  Sparkles,
+  Info
 } from 'lucide-react';
+import { 
+  LineChart, 
+  Line as RechartsLine, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  Legend, 
+  PieChart, 
+  Pie, 
+  Cell 
+} from 'recharts';
+import { Company, City, Bus, Line, Schedule, CompletedTrip } from './types';
+import { 
+  getScheduleDemandEstimation, 
+  checkScheduleFeasibility, 
+  getBusCapacity 
+} from './utils/demandHelper';
+import { generateDemoData } from './utils/generators';
+import { 
+  auth, 
+  db, 
+  onAuthStateChanged, 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  signOut, 
+  signInWithPopup, 
+  GoogleAuthProvider,
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
+  query,
+  where,
+  onSnapshot,
+  FirebaseUser
+} from './lib/firebase';
 
 export default function App() {
-  // State definitions
-  const [company, setCompany] = useState<Company | null>(() => {
-    const saved = localStorage.getItem('expb_company');
-    return saved ? JSON.parse(saved) : null;
-  });
+  // Authentication & Session States
+  const [user, setUser] = useState<FirebaseUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [authError, setAuthError] = useState('');
+  const [authSuccess, setAuthSuccess] = useState('');
 
-  const [cities, setCities] = useState<City[]>(() => {
-    const saved = localStorage.getItem('expb_cities');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Active Company Selection
+  const [activeCompany, setActiveCompany] = useState<Company | null>(null);
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [newCompanyName, setNewCompanyName] = useState('');
+  const [newCompanyCode, setNewCompanyCode] = useState('');
+  const [companyError, setCompanyError] = useState('');
 
-  const [partners, setPartners] = useState<PartnerCompany[]>(() => {
-    const saved = localStorage.getItem('expb_partners');
-    return saved ? JSON.parse(saved) : [];
-  });
+  // Core Management Lists (Synced with Firestore or Local Cache)
+  const [cities, setCities] = useState<City[]>([]);
+  const [buses, setBuses] = useState<Bus[]>([]);
+  const [lines, setLines] = useState<Line[]>([]);
+  const [schedules, setSchedules] = useState<Schedule[]>([]);
+  const [completedTrips, setCompletedTrips] = useState<CompletedTrip[]>([]);
 
-  const [accumulatedPassengers, setAccumulatedPassengers] = useState<Record<string, number>>(() => {
-    const saved = localStorage.getItem('expb_accumulated_passengers');
-    return saved ? JSON.parse(saved) : {};
-  });
+  // Navigation tab state
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'cities' | 'fleet' | 'lines' | 'schedules' | 'simulator'>('dashboard');
 
+  // Creation forms states
+  // 1. City Form
+  const [cityName, setCityName] = useState('');
+  const [cityState, setCityState] = useState('');
+  const [cityCode, setCityCode] = useState('');
+  const [cityError, setCityError] = useState('');
+
+  // 2. Bus Form
+  const [busPlate, setBusPlate] = useState('');
+  const [busModel, setBusModel] = useState('');
+  const [busServiceType, setBusServiceType] = useState<'convencional' | 'executivo' | 'leito'>('executivo');
+  const [busError, setBusError] = useState('');
+
+  // 3. Line Form
+  const [lineOriginCityId, setLineOriginCityId] = useState('');
+  const [lineDestinationCityId, setLineDestinationCityId] = useState('');
+  const [lineDistance, setLineDistance] = useState<number>(100);
+  const [lineDuration, setLineDuration] = useState<number>(90);
+  const [lineServiceType, setLineServiceType] = useState<'convencional' | 'executivo' | 'leito'>('executivo');
+  const [lineError, setLineError] = useState('');
+
+  // 4. Schedule Form
+  const [schedLineId, setSchedLineId] = useState('');
+  const [schedDepartureTime, setSchedDepartureTime] = useState('');
+  const [schedFrequency, setSchedFrequency] = useState<'diaria' | 'seg-sex' | 'fds' | 'semanal'>('diaria');
+  const [schedServiceType, setSchedServiceType] = useState<'convencional' | 'executivo' | 'leito'>('executivo');
+  const [schedError, setSchedError] = useState('');
+
+  // Live Simulated departures management
+  const [activeVoyages, setActiveVoyages] = useState<{
+    id: string;
+    scheduleId: string;
+    lineId: string;
+    busId: string;
+    departureTime: string;
+    progress: number; // 0 to 100
+    passengerCount: number;
+    ticketPrice: number;
+  }[]>([]);
+
+  // Fallback storage mode (when Firestore is disconnected/offline)
+  const [isLocalMode, setIsLocalMode] = useState(false);
+
+  // Load User Auth Handler
   useEffect(() => {
-    localStorage.setItem('expb_accumulated_passengers', JSON.stringify(accumulatedPassengers));
-  }, [accumulatedPassengers]);
+    if (!auth) {
+      setIsLocalMode(true);
+      setAuthLoading(false);
+      // Initialize local guest user
+      const guestUser = localStorage.getItem('local_guest_user');
+      if (guestUser) {
+        setUser(JSON.parse(guestUser));
+      }
+      return;
+    }
 
-  const [fleet, setFleet] = useState<Bus[]>(() => {
-    const saved = localStorage.getItem('expb_fleet');
-    return saved ? JSON.parse(saved) : [];
-  });
+    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      setUser(firebaseUser);
+      setAuthLoading(false);
+      if (firebaseUser) {
+        setIsLocalMode(false);
+      }
+    });
 
-  const [lines, setLines] = useState<Line[]>(() => {
-    const saved = localStorage.getItem('expb_lines');
-    return saved ? JSON.parse(saved) : [];
-  });
+    return () => unsubscribe();
+  }, []);
 
-  const [schedules, setSchedules] = useState<Schedule[]>(() => {
-    const saved = localStorage.getItem('expb_schedules');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [trips, setTrips] = useState<Trip[]>(() => {
-    const saved = localStorage.getItem('expb_trips');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [logs, setLogs] = useState<SystemLog[]>(() => {
-    const saved = localStorage.getItem('expb_logs');
-    return saved ? JSON.parse(saved) : [];
-  });
-
-  const [simTime, setSimTime] = useState<{ hour: number; minute: number; day: number }>(() => {
-    const saved = localStorage.getItem('expb_time');
-    return saved ? JSON.parse(saved) : { hour: 8, minute: 0, day: 1 };
-  });
-
-  const [simSpeed, setSimSpeed] = useState<number>(0); // 0 = paused, 1 = normal, 5 = fast, 15 = ultra
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'cities' | 'fleet' | 'lines' | 'projection' | 'completed'>('dashboard');
-  const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const [deletingCityId, setDeletingCityId] = useState<string | null>(null);
-
-  // Ref tracking to bypass state stale closures inside the ticking loop
-  const stateRef = useRef({ cities, partners, fleet, lines, schedules, trips, simTime, logs, accumulatedPassengers });
-  stateRef.current = { cities, partners, fleet, lines, schedules, trips, simTime, logs, accumulatedPassengers };
-
-  // Write changes to localStorage layout
+  // Fetch Companies synced to current UID
   useEffect(() => {
-    if (company) localStorage.setItem('expb_company', JSON.stringify(company));
-    else localStorage.removeItem('expb_company');
-  }, [company]);
+    if (authLoading) return;
 
+    if (!user) {
+      setCompanies([]);
+      setActiveCompany(null);
+      return;
+    }
+
+    if (isLocalMode) {
+      // LocalStorage mode
+      const rawCompanies = localStorage.getItem(`local_companies_${user.uid}`);
+      if (rawCompanies) {
+        setCompanies(JSON.parse(rawCompanies));
+      } else {
+        setCompanies([]);
+      }
+      return;
+    }
+
+    // Firestore mode
+    try {
+      const q = query(collection(db, 'companies'), where('ownerUid', '==', user.uid));
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const fetched: Company[] = snapshot.docs.map(docSnapshot => ({
+          id: docSnapshot.id,
+          ...docSnapshot.data()
+        } as Company));
+        setCompanies(fetched);
+      }, (err) => {
+        console.warn("Sem permissão ou erro no Firestore. Ativando cache local de empresas.", err);
+        // Fallback to cache
+        const rawCompanies = localStorage.getItem(`local_companies_${user?.uid}`);
+        if (rawCompanies) {
+          setCompanies(JSON.parse(rawCompanies));
+        }
+      });
+      return () => unsubscribe();
+    } catch (e) {
+      console.error(e);
+    }
+  }, [user, authLoading, isLocalMode]);
+
+  // Fetch Company Data (Cities, Buses, Lines, Schedules, Trips)
   useEffect(() => {
-    localStorage.setItem('expb_cities', JSON.stringify(cities));
-  }, [cities]);
-
-  useEffect(() => {
-    localStorage.setItem('expb_partners', JSON.stringify(partners));
-  }, [partners]);
-
-  useEffect(() => {
-    localStorage.setItem('expb_fleet', JSON.stringify(fleet));
-  }, [fleet]);
-
-  useEffect(() => {
-    localStorage.setItem('expb_lines', JSON.stringify(lines));
-  }, [lines]);
-
-  useEffect(() => {
-    localStorage.setItem('expb_schedules', JSON.stringify(schedules));
-  }, [schedules]);
-
-  useEffect(() => {
-    localStorage.setItem('expb_trips', JSON.stringify(trips));
-  }, [trips]);
-
-  useEffect(() => {
-    localStorage.setItem('expb_logs', JSON.stringify(logs));
-  }, [logs]);
-
-  useEffect(() => {
-    localStorage.setItem('expb_time', JSON.stringify(simTime));
-  }, [simTime]);
-
-  const addLog = (message: string, type: 'info' | 'success' | 'warning' | 'alert' | 'error' = 'info') => {
-    const timeStr = `${String(stateRef.current.simTime.hour).padStart(2, '0')}:${String(stateRef.current.simTime.minute).padStart(2, '0')}`;
-    const newLog: SystemLog = {
-      id: `log_${Math.random().toString(36).substring(2, 9)}`,
-      timestamp: timeStr,
-      type,
-      message,
-    };
-    setLogs((prev) => [newLog, ...prev.slice(0, 75)]);
-  };
-
-  const handleSetupComplete = (setup: {
-    name: string;
-    hqName: string;
-    hqState: string;
-    hqCountry: string;
-    themeColor: string;
-    logoIcon: string;
-    seedDemo: boolean;
-  }) => {
-    const activeCompany: Company = {
-      name: setup.name,
-      hqName: setup.hqName,
-      hqState: setup.hqState,
-      hqCountry: setup.hqCountry,
-      themeColor: setup.themeColor,
-      logoIcon: setup.logoIcon,
-      isActive: true,
-    } as any;
-
-    if (setup.seedDemo) {
-      setCompany(activeCompany);
-      setCities(DEMO_CITIES);
-      setPartners([]);
-      setFleet(DEMO_FLEET);
-      setLines(DEMO_LINES);
-      setSchedules(DEMO_SCHEDULES);
-      setTrips([]);
-      setSimTime({ hour: 8, minute: 0, day: 1 });
-      setSimSpeed(0);
-      setActiveTab('dashboard');
-      
-      // Seed first operational logs
-      const firstLog: SystemLog = {
-        id: 'log_seed_1',
-        timestamp: '08:00',
-        type: 'success',
-        message: `Bem-vindo ao Expresso Bus! Rede ativada com 4 cidades polo e 6 modernos ônibus da frota da "${setup.name}".`
-      };
-      setLogs([firstLog]);
-    } else {
-      // Custom start
-      const hqLower = setup.hqName.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, "").replace(/[^a-z0-9]/g, "");
-      
-      const hqCoordsMap: Record<string, { lat: number; lon: number; pop: number; attr: number; voc: 'metropole' | 'turismo' | 'industrial' | 'interior' }> = {
-        'saopaulo': { lat: -23.5505, lon: -46.6333, pop: 12300000, attr: 95, voc: 'metropole' },
-        'riodejaneiro': { lat: -22.9068, lon: -43.1729, pop: 6748000, attr: 98, voc: 'turismo' },
-        'belohorizonte': { lat: -19.9167, lon: -43.9345, pop: 2521000, attr: 75, voc: 'industrial' },
-        'curitiba': { lat: -25.4290, lon: -49.2671, pop: 1948000, attr: 80, voc: 'metropole' },
-        'campinas': { lat: -22.9099, lon: -47.0626, pop: 1210000, attr: 75, voc: 'industrial' },
-        'santos': { lat: -23.9608, lon: -46.3331, pop: 433000, attr: 90, voc: 'turismo' },
-        'saojosedoscampos': { lat: -23.1791, lon: -45.8872, pop: 730000, attr: 70, voc: 'industrial' },
-        'sorocaba': { lat: -23.5015, lon: -47.4526, pop: 687000, attr: 65, voc: 'industrial' },
-        'ribeiraopreto': { lat: -21.1704, lon: -47.8103, pop: 711000, attr: 75, voc: 'industrial' },
-        'portoalegre': { lat: -30.0346, lon: -51.2177, pop: 1488000, attr: 85, voc: 'metropole' },
-        'brasilia': { lat: -15.7942, lon: -47.8822, pop: 3015000, attr: 80, voc: 'metropole' },
-        'goiania': { lat: -16.6869, lon: -49.2648, pop: 1532000, attr: 75, voc: 'metropole' },
-        'salvador': { lat: -12.9777, lon: -38.5016, pop: 2886000, attr: 92, voc: 'turismo' },
-      };
-
-      const matchedHq = hqCoordsMap[hqLower];
-
-      const firstCity: City = {
-        id: 'c_hq',
-        name: setup.hqName,
-        state: setup.hqState.toUpperCase(),
-        country: setup.hqCountry,
-        latitude: matchedHq ? matchedHq.lat : parseFloat((-22.5 - Math.random() * 3).toFixed(4)),
-        longitude: matchedHq ? matchedHq.lon : parseFloat((-46.5 - Math.random() * 3).toFixed(4)),
-        population: matchedHq ? matchedHq.pop : 350000,
-        attractiveness: matchedHq ? matchedHq.attr : 65,
-        vocation: matchedHq ? matchedHq.voc : 'interior',
-        additionalInfo: `Sede Central da ${setup.name}. Polo operacional principal ativado.`
-      };
-
-      setCompany(activeCompany);
-      setCities([firstCity]);
-      setPartners([]);
-      setFleet([]);
+    if (!user || !activeCompany) {
+      setCities([]);
+      setBuses([]);
       setLines([]);
       setSchedules([]);
-      setTrips([]);
-      setSimTime({ hour: 8, minute: 0, day: 1 });
-      setSimSpeed(0);
-      setActiveTab('cities');
-
-      const startLog: SystemLog = {
-        id: 'log_start',
-        timestamp: '08:00',
-        type: 'success',
-        message: `Empresa "${setup.name}" criada com sede em ${setup.hqName} (${setup.hqState}). Cadastre novas cidades e monte sua primeira rota!`
-      };
-      setLogs([startLog]);
-    }
-  };
-
-  const handleRawReset = () => {
-    setCompany(null);
-    setCities([]);
-    setPartners([]);
-    setFleet([]);
-    setLines([]);
-    setSchedules([]);
-    setTrips([]);
-    setLogs([]);
-    setSimTime({ hour: 8, minute: 0, day: 1 });
-    setSimSpeed(0);
-    localStorage.clear();
-  };
-
-  const handleReset = () => {
-    setShowResetConfirm(true);
-  };
-
-  // State update callbacks
-  const handleAddCity = (newCity: City, newPartners: PartnerCompany[]) => {
-    setCities((prev) => [...prev, newCity]);
-    setPartners((prev) => [...prev, ...newPartners]);
-    
-    // Log addition
-    addLog(`Infraestrutura: Polo operacional ativado em "${newCity.name} (${newCity.state})". Nova garagem regional disponível.`, 'success');
-    
-    newPartners.forEach((p) => {
-      addLog(`Empresa Parceira "${p.name}" firmou convênio regional em ${newCity.name}. Frota de apoio disponível: ${p.fleetSize} ônibus.`, 'info');
-    });
-  };
-
-  const handleDeleteCity = (id: string) => {
-    setDeletingCityId(id);
-  };
-
-  const executeDeleteCity = (id: string) => {
-    const city = cities.find((c) => c.id === id);
-    if (!city) return;
-
-    setCities((prev) => prev.filter((c) => c.id !== id));
-    setPartners((prev) => prev.filter((p) => p.baseCityId !== id));
-    setLines((prev) => prev.filter((l) => l.originCityId !== id && l.destinationCityId !== id));
-    setSchedules((prev) => {
-      // Find lines to delete
-      const remainingLineIds = lines
-        .filter((l) => l.originCityId !== id && l.destinationCityId !== id)
-        .map((l) => l.id);
-      return prev.filter((s) => remainingLineIds.includes(s.lineId));
-    });
-    addLog(`Infraestrutura: Polo de "${city.name}" foi desativado e desfeitas as parcerias locais.`, 'warning');
-    setDeletingCityId(null);
-  };
-
-  const handleAddBus = (newBus: Bus) => {
-    setFleet((prev) => [...prev, newBus]);
-    addLog(`Frota: Ônibus Marcopolo/Comil prefixo #${newBus.prefix} cadastrado e pronto para integração.`, 'info');
-  };
-
-  const handleUpdateBusStatus = (id: string, status: 'disponivel' | 'em_viagem' | 'em_manutencao' | 'reserva') => {
-    setFleet((prev) => prev.map((b) => (b.id === id ? { ...b, status } : b)));
-    const target = fleet.find((b) => b.id === id);
-    if (target) {
-      addLog(`Frota: Ônibus #${target.prefix} teve status operacional alterado de "${target.status}" para "${status}".`, 'info');
-    }
-  };
-
-  const handleUpdateBusLocation = (id: string, cityId: string) => {
-    setFleet((prev) => prev.map((b) => (b.id === id ? { ...b, currentCityId: cityId } : b)));
-    const target = fleet.find((b) => b.id === id);
-    const destName = cities.find((c) => c.id === cityId)?.name || 'Nova Cidade';
-    if (target) {
-      addLog(`Frota: Ônibus #${target.prefix} deslocado de imediato (teleporte rápido) para "${destName}".`, 'info');
-    }
-  };
-
-  const handleUpdateBusServiceType = (id: string, serviceType: 'convencional' | 'executivo' | 'leito') => {
-    setFleet((prev) => prev.map((b) => (b.id === id ? { ...b, serviceType } : b)));
-    const target = fleet.find((b) => b.id === id);
-    if (target) {
-      const displayService = serviceType === 'convencional' ? 'Convencional' : serviceType === 'executivo' ? 'Executivo' : 'Leito';
-      const prevService = target.serviceType === 'convencional' ? 'Convencional' : target.serviceType === 'executivo' ? 'Executivo' : 'Leito';
-      addLog(`Frota: Ônibus #${target.prefix} alterou tipo de serviço de "${prevService}" para "${displayService}".`, 'info');
-    }
-  };
-
-  const handleStartTransferTrip = (busId: string, originCityId: string, destCityId: string) => {
-    const bus = fleet.find((b) => b.id === busId);
-    if (!bus) return;
-
-    if (bus.status === 'em_viagem') {
-      addLog(`Frota: Não é possível transferir o ônibus #${bus.prefix} pois ele já está em trânsito.`, 'error');
+      setCompletedTrips([]);
       return;
     }
 
-    const oCity = cities.find((c) => c.id === originCityId);
-    const dCity = cities.find((c) => c.id === destCityId);
-
-    if (!oCity || !dCity) {
-      addLog(`Frota: Origem ou destino da transferência inválidos.`, 'error');
+    if (isLocalMode) {
+      const storageKey = `local_data_${user.uid}_${activeCompany.id}`;
+      const raw = localStorage.getItem(storageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        setCities(parsed.cities || []);
+        setBuses(parsed.buses || []);
+        setLines(parsed.lines || []);
+        setSchedules(parsed.schedules || []);
+        setCompletedTrips(parsed.completedTrips || []);
+      } else {
+        setCities([]);
+        setBuses([]);
+        setLines([]);
+        setSchedules([]);
+        setCompletedTrips([]);
+      }
       return;
     }
 
-    // Calculate distance-based travel duration
-    let duration = 90; // Default minutes
-    if (oCity.latitude !== undefined && oCity.longitude !== undefined && dCity.latitude !== undefined && dCity.longitude !== undefined) {
-      const dy = dCity.latitude - oCity.latitude;
-      const dx = dCity.longitude - oCity.longitude;
-      const degDistance = Math.sqrt(dx * dx + dy * dy);
-      // Roughly 1 degree translates to ~ 110km, speed of average bus on BR highways is around 70 km/h: ~1.5 h
-      duration = Math.max(30, Math.round(degDistance * 105));
-    }
+    // Firestore Sync
+    const unsubscibers: (() => void)[] = [];
 
-    const minutesEpoch = simTime.day * 1440 + simTime.hour * 60 + simTime.minute;
-    const timeFormatted = `${String(simTime.hour).padStart(2, '0')}:${String(simTime.minute).padStart(2, '0')}`;
+    try {
+      const companyId = activeCompany.id;
 
-    const newTrip: Trip = {
-      id: `trip_trans_${Math.random().toString(36).substring(2, 9)}`,
-      lineId: 'transfer',
-      busId: bus.id,
-      isPartnerTrip: false,
-      departureTime: timeFormatted,
-      departureTimestamp: minutesEpoch,
-      estimatedArrivalTimestamp: minutesEpoch + duration,
-      progress: 0,
-      status: 'em_curso',
-      passengerCount: 0,
-      isTransfer: true,
-      transferOriginCityId: originCityId,
-      transferDestCityId: destCityId,
-      transferDuration: duration,
-    };
+      // Cities listener
+      const qCities = query(collection(db, 'cities'), where('companyId', '==', companyId));
+      const unsubCities = onSnapshot(qCities, (snap) => {
+        setCities(snap.docs.map(d => ({ id: d.id, ...d.data() } as City)));
+      }, () => handleLoadCache(companyId));
+      unsubscibers.push(unsubCities);
 
-    setFleet((prev) => prev.map((b) => (b.id === bus.id ? { ...b, status: 'em_viagem' } : b)));
-    setTrips((prev) => [newTrip, ...prev]);
-
-    addLog(`Translado Extra: Ônibus próprio #${bus.prefix} (${bus.model}) partiu na linha de translado ${oCity.name} ➔ ${dCity.name} em viagem extra de reposicionamento vazio. Tempo estimado: ${Math.floor(duration / 60)}h ${duration % 60}m.`, 'success');
-  };
-
-  const handleDeleteBus = (id: string) => {
-    const target = fleet.find((b) => b.id === id);
-    if (target) {
-      setFleet((prev) => prev.filter((b) => b.id !== id));
-      addLog(`Frota: Ônibus #${target.prefix} removido da grade ativa permanente.`, 'warning');
-    }
-  };
-
-  const handleAddLine = (newLine: Line) => {
-    const linesToInsert = [newLine];
-    const o = cities.find((c) => c.id === newLine.originCityId);
-    const d = cities.find((c) => c.id === newLine.destinationCityId);
-    
-    // Check if the reciprocal return line already exists with same route and stops
-    const returnExists = lines.some(
-      (l) => l.originCityId === newLine.destinationCityId && 
-             l.destinationCityId === newLine.originCityId && 
-             l.serviceType === newLine.serviceType &&
-             JSON.stringify(l.stops) === JSON.stringify([...newLine.stops].reverse())
-    );
- 
-    let returnLine: Line | null = null;
-    if (!returnExists) {
-      returnLine = {
-        id: `line_ret_${newLine.id.replace('line_', '')}_${Math.random().toString(36).substring(2, 6)}`,
-        originCityId: newLine.destinationCityId,
-        destinationCityId: newLine.originCityId,
-        stops: [...newLine.stops].reverse(),
-        estimatedTime: newLine.estimatedTime,
-        demand: newLine.demand,
-        notes: newLine.notes ? `Sentido Volta: ${newLine.notes}` : 'Linha de retorno automática.',
-        serviceType: newLine.serviceType,
-      };
-      linesToInsert.push(returnLine);
-    }
- 
-    setLines((prev) => {
-      // Prevent double insertions of identical line ID
-      const uniqueNew = linesToInsert.filter(ln => !prev.some(p => p.id === ln.id));
-      return [...prev, ...uniqueNew];
-    });
- 
-    const displayService = newLine.serviceType === 'convencional' ? 'Convencional' : newLine.serviceType === 'executivo' ? 'Executivo' : 'Leito';
-    addLog(`Grade Linhas: Rota direta tipo "${displayService}" aberta de ${o?.name} ➔ ${d?.name} (${Math.floor(newLine.estimatedTime / 60)}h ${newLine.estimatedTime % 60}m).`, 'success');
-    
-    if (returnLine) {
-      addLog(`Grade Linhas: Rota de RETORNO "${displayService}" criada automaticamente: ${d?.name} ➔ ${o?.name} com as escalas invertidas.`, 'success');
-    }
-  };
-
-  const handleDeleteLine = (id: string) => {
-    const line = lines.find((l) => l.id === id);
-    if (line) {
-      const o = cities.find((c) => c.id === line.originCityId);
-      const d = cities.find((c) => c.id === line.destinationCityId);
-      setLines((prev) => prev.filter((l) => l.id !== id));
-      setSchedules((prev) => prev.filter((s) => s.lineId !== id));
-      addLog(`Grade Linhas: Linha ${o?.name} ➔ ${d?.name} e seus horários foram cancelados.`, 'warning');
-    }
-  };
-
-  const handleAddSchedule = (newSchedule: Schedule) => {
-    setSchedules((prev) => [...prev, newSchedule]);
-    const line = lines.find((l) => l.id === newSchedule.lineId);
-    const o = cities.find((c) => c.id === line?.originCityId);
-    const d = cities.find((c) => c.id === line?.destinationCityId);
-    addLog(`Agenda: Estabelecida nova saída programada das ${newSchedule.departureTime} (${newSchedule.frequency}) para a linha ${o?.name} ➔ ${d?.name}.`, 'info');
-  };
-
-  const handleDeleteSchedule = (id: string) => {
-    const sched = schedules.find((s) => s.id === id);
-    if (sched) {
-      const line = lines.find((l) => l.id === sched.lineId);
-      const o = cities.find((c) => c.id === line?.originCityId);
-      const d = cities.find((c) => c.id === line?.destinationCityId);
-      setSchedules((prev) => prev.filter((s) => s.id !== id));
-      addLog(`Agenda: Partida das ${sched.departureTime} para a rota ${o?.name} ➔ ${d?.name} foi removida.`, 'warning');
-    }
-  };
-
-  const handleUpdateSchedule = (updatedSchedule: Schedule) => {
-    setSchedules((prev) => prev.map((s) => s.id === updatedSchedule.id ? updatedSchedule : s));
-    const line = lines.find((l) => l.id === updatedSchedule.lineId);
-    const o = cities.find((c) => c.id === line?.originCityId);
-    const d = cities.find((c) => c.id === line?.destinationCityId);
-    addLog(`Agenda: Horário de partida alterado para as ${updatedSchedule.departureTime} (${updatedSchedule.frequency}) para a linha ${o?.name} ➔ ${d?.name}.`, 'info');
-  };
-
-  const getDayPT = (day: number) => {
-    const days = ['Segunda-feira', 'Terça-feira', 'Quarta-feira', 'Quinta-feira', 'Sexta-feira', 'Sábado', 'Domingo'];
-    return days[(day - 1) % 7];
-  };
-
-  const formatTimeStr = (h: number, m: number) => {
-    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-  };
-
-  // Main simulated time stepper
-  const advanceSimulation = (minutesToAdvance: number) => {
-    const current = stateRef.current;
-    
-    // Copy states to make them local and mutable during simulation steps
-    let localFleet = current.fleet.map(b => ({ ...b }));
-    let localTrips = current.trips.map(t => ({ ...t }));
-    let localAccumulated = { ...current.accumulatedPassengers };
-
-    let tempHour = current.simTime.hour;
-    let tempMin = current.simTime.minute;
-    let tempDay = current.simTime.day;
-
-    let nextMin = current.simTime.minute + minutesToAdvance;
-    let nextHour = current.simTime.hour;
-    let nextDay = current.simTime.day;
-
-    if (nextMin >= 60) {
-      nextHour += Math.floor(nextMin / 60);
-      nextMin = nextMin % 60;
-    }
-    if (nextHour >= 24) {
-      nextDay += Math.floor(nextHour / 24);
-      nextHour = nextHour % 24;
-    }
-
-    const nextTime = { hour: nextHour, minute: nextMin, day: nextDay };
-
-    const getTripDuration = (trip: Trip) => {
-      if (trip.isTransfer && trip.transferDuration) {
-        return trip.transferDuration;
-      }
-      return (lines.find((l) => l.id === trip.lineId)?.estimatedTime || 120);
-    };
-
-    // We process minute-by-minute
-    for (let mOffset = 1; mOffset <= minutesToAdvance; mOffset++) {
-      tempMin++;
-      if (tempMin >= 60) {
-        tempHour++;
-        tempMin = 0;
-      }
-      if (tempHour >= 24) {
-        tempDay++;
-        tempHour = 0;
-      }
-
-      const loopLogTime = `${String(tempHour).padStart(2, '0')}:${String(tempMin).padStart(2, '0')}`;
-      const loopMinutes = tempDay * 1440 + tempHour * 60 + tempMin;
-
-      // 1. Process Arrivals at loopMinutes
-      localTrips = localTrips.map((trip) => {
-        if (trip.status !== 'em_curso' && trip.status !== 'programada') return trip;
-
-        const duration = getTripDuration(trip);
-        const tripDepartMin = trip.departureTimestamp;
-        const tripArriveMin = tripDepartMin + duration;
-
-        // Has the trip finished at or before loopMinutes?
-        if (loopMinutes >= tripArriveMin) {
-          // Yes! Arrived!
-          let originCityId = '';
-          let destCityId = '';
-
-          if (trip.isTransfer) {
-            originCityId = trip.transferOriginCityId || '';
-            destCityId = trip.transferDestCityId || '';
-          } else {
-            const line = lines.find((l) => l.id === trip.lineId);
-            originCityId = line?.originCityId || '';
-            destCityId = line?.destinationCityId || '';
-          }
-
-          const originCity = cities.find((c) => c.id === originCityId);
-          const destCity = cities.find((c) => c.id === destCityId);
-
-          if (trip.isPartnerTrip) {
-            const partnerCompany = partners.find((p) => p.id === trip.partnerCompanyId);
-            const isGoingHome = partnerCompany && partnerCompany.baseCityId === destCityId;
-
-            if (isGoingHome) {
-              // Remove partner bus returning home
-              localFleet = localFleet.filter((b) => b.id !== trip.busId);
-              addLog(`Parceria Finalizada: Ônibus parceiro de "${partnerCompany?.name}" concluiu a linha de volta da rota ${originCity?.name} ➔ ${destCity?.name} e retornou à sua garagem em ${destCity?.name}.`, 'success');
-            } else {
-              // Under guest destination city, mark as disponivel
-              localFleet = localFleet.map((b) => {
-                if (b.id === trip.busId) {
-                  return { ...b, status: 'disponivel' as const, currentCityId: destCityId, availableSince: loopMinutes };
-                }
-                return b;
-              });
-              const pBus = localFleet.find((b) => b.id === trip.busId);
-              const prefixVal = pBus ? `#${pBus.prefix}` : 'Terceirizado';
-              addLog(`Apoio Disponível: Ônibus parceiro ${prefixVal} da "${partnerCompany?.name}" concluiu a linha ${originCity?.name} ➔ ${destCity?.name} e está disponível em ${destCity?.name} para a viagem de volta para ${originCity?.name} sem regressar vazio.`, 'success');
-            }
-          } else {
-            // Own bus arrived! Make it available immediately at destination city
-            localFleet = localFleet.map((b) => {
-              if (b.id === trip.busId) {
-                return { ...b, status: 'disponivel' as const, currentCityId: destCityId || b.currentCityId, availableSince: loopMinutes };
-              }
-              return b;
-            });
-
-            const bObj = localFleet.find((b) => b.id === trip.busId);
-            const prefixVal = bObj ? `#${bObj.prefix}` : '';
-            if (trip.isTransfer) {
-              addLog(`Trânsito Concluído: Translado do ônibus ${prefixVal} (${bObj?.model}) na rota ${originCity?.name} ➔ ${destCity?.name} finalizado! O veículo chegou vazio e está disponível para uso em ${destCity?.name || 'Destino'}.`, 'success');
-            } else {
-              addLog(`Chegada Consorciada: Ônibus ${prefixVal} (${bObj?.model}) concluiu viagem (partida das ${trip.departureTime}) na rota completa ${originCity?.name} ➔ ${destCity?.name}. Passageiros desembarcaram com sucesso no Terminal de ${destCity?.name || 'Destino'}.`, 'success');
-            }
-          }
-
-          // Compute final passenger count if stop details are present
-          let activePassengers = trip.passengerCount;
-          if (trip.stopDetails && trip.stopDetails.length > 0) {
-            const oCount = trip.originalPassengerCount ?? trip.passengerCount;
-            let runningCount = oCount;
-            trip.stopDetails.forEach((stop, index) => {
-              runningCount = runningCount - stop.deboarded + stop.boarded;
-            });
-            activePassengers = runningCount;
-          }
-
-          return { ...trip, progress: 100, status: 'concluida' as const, passengerCount: activePassengers };
-        }
-
-        // 2. Otherwise update progress of still active/programmed trips
-        let currentStatus = trip.status;
-        if (currentStatus === 'programada') {
-          if (loopMinutes >= tripDepartMin) {
-            currentStatus = 'em_curso';
-          } else {
-            return { ...trip, progress: 0 };
-          }
-        }
-
-        const progress = Math.min(
-          100,
-          Math.max(0, ((loopMinutes - tripDepartMin) / duration) * 100)
-        );
-
-        let activePassengers = trip.passengerCount;
-        if (trip.stopDetails && trip.stopDetails.length > 0) {
-          const numStops = trip.stopDetails.length;
-          const oCount = trip.originalPassengerCount ?? trip.passengerCount;
-          let runningCount = oCount;
-          
-          trip.stopDetails.forEach((stop, index) => {
-            const targetPct = ((index + 1) / (numStops + 1)) * 100;
-            if (progress >= targetPct) {
-              runningCount = runningCount - stop.deboarded + stop.boarded;
-            }
-          });
-          activePassengers = runningCount;
-        }
-
-        return { ...trip, progress, status: currentStatus, passengerCount: activePassengers };
+      // Buses listener
+      const qBuses = query(collection(db, 'buses'), where('companyId', '==', companyId));
+      const unsubBuses = onSnapshot(qBuses, (snap) => {
+        setBuses(snap.docs.map(d => ({ id: d.id, ...d.data() } as Bus)));
       });
+      unsubscibers.push(unsubBuses);
 
-      // 3. Scan schedules for departures 15 minutes in the future (futureMinutes = loopMinutes + 15)
-      const futureMinutes = loopMinutes + 15;
-      const futHour = Math.floor((futureMinutes % 1440) / 60);
-      const futMin = (futureMinutes % 1440) % 60;
-      const futDay = Math.floor(futureMinutes / 1440);
-      
-      const futureTimeStr = `${String(futHour).padStart(2, '0')}:${String(futMin).padStart(2, '0')}`;
-      const dayOfWeek = ((futDay - 1) % 7) + 1;
-
-      // Filter schedules matching this future departure time
-      const matchingSchedules = schedules.filter((s) => s.departureTime === futureTimeStr);
-
-      matchingSchedules.forEach((schedule) => {
-        // Prevent double scaling for the exact same departure timestamp
-        const tripExists = localTrips.some(
-          (t) => t.scheduleId === schedule.id && t.departureTimestamp === futureMinutes
-        );
-
-        if (tripExists) return;
-
-        // Validate frequencies filters
-        let isApplicable = false;
-        if (schedule.frequency === 'diaria') {
-          isApplicable = true;
-        } else if (schedule.frequency === 'seg-sex' && dayOfWeek >= 1 && dayOfWeek <= 5) {
-          isApplicable = true;
-        } else if (schedule.frequency === 'fds' && (dayOfWeek === 6 || dayOfWeek === 7)) {
-          isApplicable = true;
-        } else if (schedule.frequency === 'semanal' && dayOfWeek === 1) {
-          isApplicable = true;
-        }
-
-        if (!isApplicable) return;
-
-        const line = lines.find((l) => l.id === schedule.lineId);
-        if (!line) return;
-
-        const oCity = cities.find((c) => c.id === line.originCityId);
-        const dCity = cities.find((c) => c.id === line.destinationCityId);
-
-        // Find all parallel lines connecting the same origin and destination
-        const matchingLines = lines.filter(
-          (l) => l.originCityId === line.originCityId && l.destinationCityId === line.destinationCityId
-        );
-        // Pool the accumulated passengers across all these matching lines
-        const totalDirectionAccumulated = matchingLines.reduce((sum, l) => sum + (localAccumulated[l.id] || 0), 0);
-
-        const randomPassengers = calculateProjectedPassengers(futDay, line, oCity, dCity, "auto");
-        const totalPassengers = randomPassengers + totalDirectionAccumulated;
-
-        // Filter all available own buses currently stationary at the origin city of this line
-        const availableBusesAtOrigin = localFleet.filter(
-          (b) => !b.isPartner && b.currentCityId === line.originCityId && b.status === 'disponivel'
-        );
-        // Sort other vehicles by FIFO time waiting (longest waiting first, i.e., smallest availableSince first)
-        availableBusesAtOrigin.sort((x, y) => (x.availableSince ?? 0) - (y.availableSince ?? 0));
-
-        const targetServiceType = schedule.serviceType || line.serviceType || 'convencional';
-        // Separating into category matches and other categories to prioritize correct services
-        const matchingCategoryBuses = availableBusesAtOrigin.filter(b => (b.serviceType || 'convencional') === targetServiceType);
-        const otherCategoryBuses = availableBusesAtOrigin.filter(b => (b.serviceType || 'convencional') !== targetServiceType);
-
-        if (availableBusesAtOrigin.length === 0) {
-          // CANCEL THE TRIP: No own bus available
-          const newTrip: Trip = {
-            id: `trip_cancel_${Math.random().toString(36).substring(2, 9)}`,
-            lineId: line.id,
-            scheduleId: schedule.id,
-            busId: 'none',
-            isPartnerTrip: false,
-            departureTime: futureTimeStr,
-            departureTimestamp: futureMinutes,
-            estimatedArrivalTimestamp: futureMinutes + line.estimatedTime,
-            progress: 0,
-            status: 'cancelada',
-            passengerCount: totalPassengers,
-            originalPassengerCount: totalPassengers,
-          };
-          
-          localTrips.unshift(newTrip);
-
-          // Canceled trip: Add the new random passengers to the departing line's accumulated count
-          localAccumulated[line.id] = (localAccumulated[line.id] || 0) + randomPassengers;
-
-          addLog(`VIAGEM CANCELADA: Sem ônibus disponível para a rota completa de ${oCity?.name} para ${dCity?.name} às ${futureTimeStr}. ${randomPassengers} novos passageiros acumulados no polo de origem.`, 'error');
-
-        } else {
-          // Dispatch primary bus - matching category gets priority, other categories if missing (last resort)
-          const primaryBus = matchingCategoryBuses.length > 0
-            ? matchingCategoryBuses[0]
-            : otherCategoryBuses[0];
-
-          const isPrimaryMismatch = (primaryBus.serviceType || 'convencional') !== targetServiceType;
-          const primaryMismatchAlert = isPrimaryMismatch
-            ? `Incompatibilidade: Linha ${targetServiceType.toUpperCase()} atendida por veículo ${(primaryBus.serviceType || 'convencional').toUpperCase()}`
-            : undefined;
-
-          const capacity = primaryBus.capacity;
-          const passengersOnPrimary = Math.min(capacity, totalPassengers);
-          const excessPassengers = totalPassengers - passengersOnPrimary;
-
-          // Determine extra bus dispatch
-          let passengersOnExtra = 0;
-          let extraBus: Bus | null = null;
-          let extraTimeStr = '';
-          let extraMinutes = 0;
-          let isExtraMismatch = false;
-          let extraMismatchAlert: string | undefined = undefined;
-
-          if (excessPassengers >= 10) {
-            const remainingBuses = availableBusesAtOrigin.filter(b => b.id !== primaryBus.id);
-            const remainingMatching = remainingBuses.filter(b => (b.serviceType || 'convencional') === targetServiceType);
-            const remainingOther = remainingBuses.filter(b => (b.serviceType || 'convencional') !== targetServiceType);
-
-            if (remainingBuses.length > 0) {
-              extraBus = remainingMatching.length > 0 ? remainingMatching[0] : remainingOther[0];
-              passengersOnExtra = Math.min(extraBus.capacity, excessPassengers);
-              isExtraMismatch = (extraBus.serviceType || 'convencional') !== targetServiceType;
-              if (isExtraMismatch) {
-                extraMismatchAlert = `Incompatibilidade: Linha ${targetServiceType.toUpperCase()} atendida por veículo extra ${(extraBus.serviceType || 'convencional').toUpperCase()}`;
-              }
-              
-              extraMinutes = futureMinutes + 10;
-              const extraHour = Math.floor((extraMinutes % 1440) / 60);
-              const extraMin = (extraMinutes % 1440) % 60;
-              extraTimeStr = `${String(extraHour).padStart(2, '0')}:${String(extraMin).padStart(2, '0')}`;
-            }
-          }
-
-          // Calculate how many of the boarded passengers were from the accumulated pool
-          const totalBoarded = passengersOnPrimary + passengersOnExtra;
-          const totalBoardedAccumulated = Math.min(totalDirectionAccumulated, Math.max(0, totalBoarded - randomPassengers));
-
-          // Deduct boarded accumulated passengers from matching lines sequentially
-          let toDeduct = totalBoardedAccumulated;
-          for (const mLine of matchingLines) {
-            if (toDeduct <= 0) break;
-            const val = localAccumulated[mLine.id] || 0;
-            const mDeduct = Math.min(val, toDeduct);
-            localAccumulated[mLine.id] = val - mDeduct;
-            toDeduct -= mDeduct;
-          }
-
-          // Leftover passengers (unboarded queue)
-          const totalLeftovers = totalPassengers - totalBoarded;
-          // Add any new passenger surplus (unboarded portion of new demand) to the departing line
-          const newSurplus = Math.max(0, totalLeftovers - (totalDirectionAccumulated - totalBoardedAccumulated));
-          localAccumulated[line.id] = (localAccumulated[line.id] || 0) + newSurplus;
-
-          // Compute stops
-          const computedStops = line.stops && line.stops.length > 0
-            ? generateStopDetails(futDay, line, cities, passengersOnPrimary, capacity)
-            : undefined;
-
-          // Dispatch the trip
-          const newPrimaryTrip: Trip = {
-            id: `trip_${Math.random().toString(36).substring(2, 9)}`,
-            lineId: line.id,
-            scheduleId: schedule.id,
-            busId: primaryBus.id,
-            isPartnerTrip: false,
-            departureTime: futureTimeStr,
-            departureTimestamp: futureMinutes,
-            estimatedArrivalTimestamp: futureMinutes + line.estimatedTime,
-            progress: 0,
-            status: 'programada',
-            passengerCount: passengersOnPrimary,
-            originalPassengerCount: passengersOnPrimary,
-            stopDetails: computedStops,
-            isExtraTrip: false,
-            categoryMismatch: isPrimaryMismatch,
-            categoryMismatchAlert: primaryMismatchAlert,
-          };
-
-          localTrips.unshift(newPrimaryTrip);
-
-          // Synchronously mark primary bus as 'em_viagem'
-          localFleet = localFleet.map((b) => (b.id === primaryBus.id ? { ...b, status: 'em_viagem' as const } : b));
-
-          addLog(`Fila de Prioridade: Ônibus #${primaryBus.prefix} (${primaryBus.model}) escalado para a linha completa ${oCity?.name} ➔ ${dCity?.name} (viagem das ${futureTimeStr}). Transportando ${passengersOnPrimary} passageiros (sendo ${totalBoardedAccumulated} retirados da fila geral do terminal).`, 'success');
-
-          if (isPrimaryMismatch) {
-            addLog(`DIVERGÊNCIA DE CATEGORIA: Escala automática alocou carro #${primaryBus.prefix} (${(primaryBus.serviceType || 'convencional').toUpperCase()}) na rota completa de categoria ${targetServiceType.toUpperCase()} (${oCity?.name} ➔ ${dCity?.name}) por falta de veículo ideal na origem.`, 'warning');
-          }
-
-          // Dispatch EXTRA TRIP/REINFORCEMENT
-          if (excessPassengers >= 10) {
-            if (extraBus) {
-              const leftovers = excessPassengers - passengersOnExtra;
-
-              const computedExtraStops = line.stops && line.stops.length > 0
-                ? generateStopDetails(futDay, line, cities, passengersOnExtra, extraBus.capacity)
-                : undefined;
-
-              const newExtraTrip: Trip = {
-                id: `trip_${Math.random().toString(36).substring(2, 9)}`,
-                lineId: line.id,
-                scheduleId: schedule.id,
-                busId: extraBus.id,
-                isPartnerTrip: false,
-                departureTime: extraTimeStr,
-                departureTimestamp: extraMinutes,
-                estimatedArrivalTimestamp: extraMinutes + line.estimatedTime,
-                progress: 0,
-                status: 'programada',
-                passengerCount: passengersOnExtra,
-                originalPassengerCount: passengersOnExtra,
-                stopDetails: computedExtraStops,
-                isExtraTrip: true,
-                categoryMismatch: isExtraMismatch,
-                categoryMismatchAlert: extraMismatchAlert,
-              };
-
-              localTrips.unshift(newExtraTrip);
-
-              // Synchronously mark extra bus as 'em_viagem'
-              localFleet = localFleet.map((b) => (b.id === extraBus!.id ? { ...b, status: 'em_viagem' as const } : b));
-
-              addLog(`VIAGEM EXTRA (REFORCO): Demanda excedente na linha completa ${oCity?.name} ➔ ${dCity?.name} disparou escala de ônibus extra #${extraBus.prefix} (${extraBus.model}) partindo às ${extraTimeStr}. Transportando ${passengersOnExtra} passageiros. ${leftovers > 0 ? `${leftovers} acumulados para a próxima.` : ''}`, 'warning');
-
-              if (isExtraMismatch) {
-                addLog(`DIVERGÊNCIA DE CATEGORIA (EXTRA): Reforço emergencial com carro #${extraBus.prefix} (${(extraBus.serviceType || 'convencional').toUpperCase()}) alocado na linha de categoria ${targetServiceType.toUpperCase()} (${oCity?.name} ➔ ${dCity?.name}).`, 'warning');
-              }
-
-            } else {
-              // No extra own bus available.
-              addLog(`CARGA COMPRIMIDA: Demanda excedente de ${excessPassengers} passageiros na rota completa ${oCity?.name} ➔ ${dCity?.name}, porém sem veículo extra sobressalente na garagem. Passageiros retidos no terminal.`, 'warning');
-            }
-          } else if (excessPassengers > 0) {
-            addLog(`SOBRO DE CAPACIDADE: Demanda excedente (${excessPassengers} passageiros) na linha completa ${oCity?.name} ➔ ${dCity?.name} é inferior a 10. Mantidos no terminal para a próxima viagem de qualquer linha compatível.`, 'info');
-          }
-        }
+      // Lines listener
+      const qLines = query(collection(db, 'lines'), where('companyId', '==', companyId));
+      const unsubLines = onSnapshot(qLines, (snap) => {
+        setLines(snap.docs.map(d => ({ id: d.id, ...d.data() } as Line)));
       });
+      unsubscibers.push(unsubLines);
+
+      // Schedules listener
+      const qScheds = query(collection(db, 'schedules'), where('companyId', '==', companyId));
+      const unsubScheds = onSnapshot(qScheds, (snap) => {
+        setSchedules(snap.docs.map(d => ({ id: d.id, ...d.data() } as Schedule)));
+      });
+      unsubscibers.push(unsubScheds);
+
+      // Completed Trips listener
+      const qTrips = query(collection(db, 'completedTrips'), where('companyId', '==', companyId));
+      const unsubTrips = onSnapshot(qTrips, (snap) => {
+        setCompletedTrips(snap.docs.map(d => ({ id: d.id, ...d.data() } as CompletedTrip)));
+      });
+      unsubscibers.push(unsubTrips);
+
+    } catch (e) {
+      console.error("Erro ao assinar coleções.", e);
+      handleLoadCache(activeCompany.id);
     }
 
-    setSimTime(nextTime);
-    setTrips(localTrips);
-    setFleet(localFleet);
-    setAccumulatedPassengers(localAccumulated);
+    return () => {
+      unsubscibers.forEach(unsub => unsub());
+    };
+  }, [activeCompany, user, isLocalMode]);
+
+  // Helper to load cache in case Firestore throws errors
+  const handleLoadCache = (companyId: string) => {
+    if (!user) return;
+    const cacheKey = `local_data_${user.uid}_${companyId}`;
+    const raw = localStorage.getItem(cacheKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      setCities(parsed.cities || []);
+      setBuses(parsed.buses || []);
+      setLines(parsed.lines || []);
+      setSchedules(parsed.schedules || []);
+      setCompletedTrips(parsed.completedTrips || []);
+    }
   };
 
-  // Dispatch dispatch wrapper callback
-  const chromeDispatchTrip = (data: {
-    lineId: string;
-    scheduleId?: string;
-    busId: string;
-    isPartnerTrip: boolean;
-    partnerCompanyId?: string;
-    departureTime: string;
-    departureTimestamp: number;
-    passengerCount: number;
-    status?: TripStatus;
-    isExtraTrip?: boolean;
-    categoryMismatch?: boolean;
-    categoryMismatchAlert?: string;
+  // Helper to save cache
+  const saveToLocalCache = (companyId: string, updatedState: {
+    cities: City[],
+    buses: Bus[],
+    lines: Line[],
+    schedules: Schedule[],
+    completedTrips: CompletedTrip[]
   }) => {
-    let actualBusId = data.busId;
+    if (!user) return;
+    const cacheKey = `local_data_${user.uid}_${companyId}`;
+    localStorage.setItem(cacheKey, JSON.stringify(updatedState));
+  };
 
-    if (data.isPartnerTrip) {
-      if (data.busId === 'partner') {
-        const partnerCompany = partners.find((p) => p.id === data.partnerCompanyId) || partners[0] || { id: 'default', name: 'Parceiro', models: ['Campione Invictus'], baseCityId: '' };
-        const newPartnerBusId = `partner_bus_${partnerCompany.id}_${Math.random().toString(36).substring(2, 9)}`;
-        const initials = (partnerCompany.name || 'PRT').slice(0, 3).toUpperCase();
-        const num = Math.floor(Math.random() * 900 + 100);
-        const line = lines.find((l) => l.id === data.lineId);
+  // Backed updater that writes to firestore or falls back to localStorage
+  const updateResource = async <T extends { id: string }>(
+    collectionName: string,
+    docId: string,
+    data: any,
+    localList: T[],
+    setLocalList: React.Dispatch<React.SetStateAction<T[]>>,
+    type: 'add' | 'update' | 'delete'
+  ) => {
+    if (!user || !activeCompany) return;
 
-        const newPartnerBus: Bus = {
-          id: newPartnerBusId,
-          prefix: `PAR-${initials}-${num}`,
-          manufacturer: 'Comil',
-          model: partnerCompany?.models?.[0] || 'Campione Invictus',
-          year: 2023,
-          capacity: 46,
-          currentCityId: line?.originCityId || partnerCompany?.baseCityId || '',
-          status: 'em_viagem',
-          isPartner: true,
-          partnerCompanyId: partnerCompany?.id,
-          serviceType: line?.serviceType || 'convencional'
-        };
-
-        // Add to active fleet dynamically so that it can complete the trip and become available at destination
-        setFleet((prev) => [...prev, newPartnerBus]);
-        actualBusId = newPartnerBusId;
+    if (isLocalMode) {
+      let updated: T[] = [];
+      if (type === 'add') {
+        updated = [...localList, { id: docId, ...data } as T];
+      } else if (type === 'update') {
+        updated = localList.map(item => item.id === docId ? { ...item, ...data } : item);
+      } else {
+        updated = localList.filter(item => item.id !== docId);
       }
+      setLocalList(updated);
+
+      // Re-save entire package to Local Cache
+      const currentState = {
+        cities: collectionName === 'cities' ? (updated as unknown as City[]) : cities,
+        buses: collectionName === 'buses' ? (updated as unknown as Bus[]) : buses,
+        lines: collectionName === 'lines' ? (updated as unknown as Line[]) : lines,
+        schedules: collectionName === 'schedules' ? (updated as unknown as Schedule[]) : schedules,
+        completedTrips: collectionName === 'completedTrips' ? (updated as unknown as CompletedTrip[]) : completedTrips,
+      };
+      saveToLocalCache(activeCompany.id, currentState);
+      return;
     }
 
-    const selectedBus = fleet.find((b) => b.id === actualBusId);
-    const busCapacity = data.isPartnerTrip ? 46 : (selectedBus?.capacity || 46);
-    const lineObj = lines.find((l) => l.id === data.lineId);
-    const computedStops = lineObj && lineObj.stops && lineObj.stops.length > 0
-      ? generateStopDetails(simTime.day, lineObj, cities, data.passengerCount, busCapacity)
-      : undefined;
+    // Firestore write
+    try {
+      const docRef = doc(db, collectionName, docId);
+      if (type === 'add' || type === 'update') {
+        await setDoc(docRef, { ...data, companyId: activeCompany.id }, { merge: true });
+      } else {
+        await deleteDoc(docRef);
+      }
+    } catch (e) {
+      console.warn("Erro ao atualizar recurso no Firestore. Atualizando cache...", e);
+      setIsLocalMode(true);
+      // Trigger local write
+      updateResource(collectionName, docId, data, localList, setLocalList, type);
+    }
+  };
 
-    const newTrip: Trip = {
-      id: `trip_${Math.random().toString(36).substring(2, 9)}`,
-      lineId: data.lineId,
-      scheduleId: data.scheduleId,
-      busId: actualBusId,
-      isPartnerTrip: data.isPartnerTrip,
-      partnerCompanyId: data.partnerCompanyId,
-      departureTime: data.departureTime,
-      departureTimestamp: data.departureTimestamp,
-      estimatedArrivalTimestamp: data.departureTimestamp + (lines.find((l) => l.id === data.lineId)?.estimatedTime || 120),
-      progress: 0,
-      status: data.status || 'em_curso',
-      passengerCount: data.passengerCount,
-      originalPassengerCount: data.passengerCount,
-      stopDetails: computedStops,
-      isExtraTrip: data.isExtraTrip || false,
-      categoryMismatch: data.categoryMismatch || false,
-      categoryMismatchAlert: data.categoryMismatchAlert,
+  // AUTHENTICATION OPERATORS
+  const handleEmailAuthSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email || !password) {
+      setAuthError('Preencha seu e-mail e senha.');
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError('');
+    setAuthSuccess('');
+
+    if (isLocalMode) {
+      // Simulate Email Auth locally
+      const mockUid = `local_user_${email.replace(/[^a-zA-Z0-9]/g, '_')}`;
+      const mockUser = { uid: mockUid, email } as FirebaseUser;
+      localStorage.setItem('local_guest_user', JSON.stringify(mockUser));
+      setUser(mockUser);
+      setAuthLoading(false);
+      setAuthSuccess('Autenticado localmente com sucesso!');
+      return;
+    }
+
+    try {
+      if (isSignUp) {
+        await createUserWithEmailAndPassword(auth, email, password);
+        setAuthSuccess('Cadastro realizado! Seja bem-vindo(a).');
+      } else {
+        await signInWithEmailAndPassword(auth, email, password);
+        setAuthSuccess('Bem-vindo de volta!');
+      }
+    } catch (err: any) {
+      console.error(err);
+      let msg = 'Erro ao realizar login ou cadastro.';
+      if (err.code === 'auth/wrong-password' || err.code === 'auth/user-not-found') {
+        msg = 'E-mail ou senha incorretos.';
+      } else if (err.code === 'auth/email-already-in-use') {
+        msg = 'Este e-mail já está sendo utilizado.';
+      } else if (err.code === 'auth/weak-password') {
+        msg = 'A senha precisa ter no mínimo 6 caracteres.';
+      } else if (err.code === 'auth/invalid-email') {
+        msg = 'O formato do e-mail é inválido.';
+      }
+      setAuthError(msg);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleGoogleSignIn = async () => {
+    if (isLocalMode) {
+      const mockUser = { uid: "local_guest_google", email: "visitante@viagempro.com" } as FirebaseUser;
+      localStorage.setItem('local_guest_user', JSON.stringify(mockUser));
+      setUser(mockUser);
+      setAuthSuccess('Acesso visitante ativado!');
+      return;
+    }
+
+    setAuthLoading(true);
+    setAuthError('');
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+      setAuthSuccess('Conexão Google realizada com sucesso!');
+    } catch (err: any) {
+      console.error(err);
+      if (err.code === 'auth/unauthorized-domain') {
+        setAuthError('Erro: Domínio não autorizado no Firebase. Use Login por E-mail (que funciona sempre) ou registre seu URL atual no Firebase Authentication.');
+      } else {
+        setAuthError(`Erro na conexão Google: ${err.message || err}`);
+      }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleSignOut = async () => {
+    setActiveCompany(null);
+    if (isLocalMode) {
+      localStorage.removeItem('local_guest_user');
+      setUser(null);
+      return;
+    }
+    await signOut(auth);
+  };
+
+  // Switch to demo mode instantly
+  const handleGuestDemoMode = () => {
+    const guestUser = { uid: 'guest_mode_uid', email: 'piloto.demo@viagempro.com' } as FirebaseUser;
+    localStorage.setItem('local_guest_user', JSON.stringify(guestUser));
+    setIsLocalMode(true);
+    setUser(guestUser);
+    setAuthError('');
+    setAuthSuccess('Modo demonstração ativado!');
+  };
+
+  // MULTI-COMPANY OPERATORS
+  const handleCreateCompanySubmit = async (e: React.FormEvent, createDemoData = false) => {
+    e.preventDefault();
+    if (!newCompanyName || !newCompanyCode) {
+      setCompanyError('Insira o nome e o código/sigla da empresa.');
+      return;
+    }
+
+    const cleanedCode = newCompanyCode.trim().toUpperCase();
+    if (companies.some(c => c.code === cleanedCode)) {
+      setCompanyError('Já existe uma empresa registrada com esta sigla.');
+      return;
+    }
+
+    const companyId = `company-${Date.now()}`;
+    const newCompany: Company = {
+      id: companyId,
+      name: newCompanyName.trim(),
+      code: cleanedCode,
+      ownerUid: user!.uid,
+      createdAt: new Date().toISOString()
     };
 
-    setTrips((prev) => {
-      const next = [newTrip, ...prev];
-      stateRef.current.trips = next;
-      return next;
-    });
-  };
-
-  // Manual Dispatch handler
-  const handleManualDispatchCallback = (
-    lineId: string,
-    busId: string,
-    isPartner: boolean,
-    partnerId?: string,
-    scheduleId?: string
-  ) => {
-    const line = lines.find((l) => l.id === lineId)!;
-    const origin = cities.find((c) => c.id === line.originCityId);
-    const dest = cities.find((c) => c.id === line.destinationCityId);
-
-    const minutesEpoch = simTime.day * 1440 + simTime.hour * 60 + simTime.minute;
-    const timeFormatted = `${String(simTime.hour).padStart(2, '0')}:${String(simTime.minute).padStart(2, '0')}`;
-
-    // For anticipated schedules, we want to forecast passenger demand for the actual departure time
-    let pCountByDemand = calculateProjectedPassengers(simTime.day, line, origin, dest, scheduleId ? "auto" : "manual");
-
-    // Board pooled accumulated passengers across all lines serving same origin/destination
-    // Note: for future schedules, we don't board the current live queue immediately at current hour.
-    const matchingLines = lines.filter(
-      (l) => l.originCityId === line.originCityId && l.destinationCityId === line.destinationCityId
-    );
-    
-    let localAccumulated = { ...accumulatedPassengers };
-    const totalDirectionAccumulated = scheduleId ? 0 : matchingLines.reduce((sum, l) => sum + (localAccumulated[l.id] || 0), 0);
-
-    const capacity = fleet.find((b) => b.id === busId)?.capacity || 46;
-    const totalPassengers = pCountByDemand + totalDirectionAccumulated;
-    const passengersOnBus = Math.min(capacity, totalPassengers);
-
-    let totalBoardedAccumulated = 0;
-    if (!scheduleId) {
-      // Deduct boarded accumulated passengers
-      totalBoardedAccumulated = Math.min(totalDirectionAccumulated, Math.max(0, passengersOnBus - pCountByDemand));
-      let toDeduct = totalBoardedAccumulated;
-      for (const mLine of matchingLines) {
-        if (toDeduct <= 0) break;
-        const val = localAccumulated[mLine.id] || 0;
-        const mDeduct = Math.min(val, toDeduct);
-        localAccumulated[mLine.id] = val - mDeduct;
-        toDeduct -= mDeduct;
+    setCompanyError('');
+    try {
+      if (isLocalMode) {
+        // Local state
+        const updatedList = [...companies, newCompany];
+        setCompanies(updatedList);
+        localStorage.setItem(`local_companies_${user!.uid}`, JSON.stringify(updatedList));
+      } else {
+        // Firestore
+        await setDoc(doc(db, 'companies', companyId), newCompany);
       }
 
-      // Leftovers calculation
-      const leftovers = totalPassengers - passengersOnBus;
-      const newSurplus = Math.max(0, leftovers - (totalDirectionAccumulated - totalBoardedAccumulated));
-      localAccumulated[line.id] = (localAccumulated[line.id] || 0) + newSurplus;
-
-      setAccumulatedPassengers(localAccumulated);
-    }
-
-    const ownBus = fleet.find((b) => b.id === busId);
-    const isMismatch = ownBus ? ((ownBus.serviceType || 'convencional') !== (line.serviceType || 'convencional')) : false;
-    const mismatchAlert = isMismatch && ownBus
-      ? `Incompatibilidade: Linha ${(line.serviceType || 'convencional').toUpperCase()} atendida por veículo ${(ownBus.serviceType || 'convencional').toUpperCase()}`
-      : undefined;
-
-    // Check if we are anticipating a schedule
-    let isAnticipated = false;
-    let departureTimeStr = timeFormatted;
-    let departureEpoch = minutesEpoch;
-    let statusOfTrip: TripStatus = 'em_curso';
-
-    if (scheduleId) {
-      const schedule = schedules.find(s => s.id === scheduleId);
-      if (schedule) {
-        isAnticipated = true;
-        departureTimeStr = schedule.departureTime;
-        const [schH, schM] = schedule.departureTime.split(':').map(Number);
-        departureEpoch = simTime.day * 1440 + schH * 60 + schM;
-        // If the departure time has not arrived yet, we set it to 'programada'
-        if (departureEpoch > minutesEpoch) {
-          statusOfTrip = 'programada';
-        }
-      }
-    }
-
-    chromeDispatchTrip({
-      lineId,
-      busId,
-      isPartnerTrip: isPartner,
-      partnerCompanyId: partnerId,
-      scheduleId,
-      departureTime: departureTimeStr,
-      departureTimestamp: departureEpoch,
-      passengerCount: passengersOnBus,
-      status: statusOfTrip,
-      categoryMismatch: isMismatch,
-      categoryMismatchAlert: mismatchAlert,
-      isExtraTrip: !scheduleId,
-    });
-
-    setFleet((prev) => {
-      const next = prev.map((b) => (b.id === busId ? { ...b, status: 'em_viagem' } : b));
-      stateRef.current.fleet = next;
-      return next;
-    });
-
-    if (isAnticipated) {
-      addLog(`Controle Manual (Antecipado): Veículo #${ownBus?.prefix} (${ownBus?.model}) foi escalado antecipadamente para a partida das ${departureTimeStr} no trecho ${origin?.name} ➔ ${dest?.name}!`, 'success');
-      if (isMismatch && ownBus) {
-        addLog(`DIVERGÊNCIA DE CATEGORIA (ANTECIPADA): Ônibus #${ownBus.prefix} (${(ownBus.serviceType || 'convencional').toUpperCase()}) foi escalado na partida das ${departureTimeStr} de categoria ${(line.serviceType || 'convencional').toUpperCase()} (${origin?.name} ➔ ${dest?.name}) antecipadamente pelo CCO.`, 'warning');
-      }
-    } else {
-      addLog(`Controle Manual: Ônibus #${ownBus?.prefix} (${ownBus?.model}) despachado manualmente na linha completa ${origin?.name} ➔ ${dest?.name}! Transportando ${passengersOnBus} passageiros (sendo ${totalBoardedAccumulated} retirados de passageiros que aguardavam no terminal).`, 'success');
-      if (isMismatch && ownBus) {
-        addLog(`DIVERGÊNCIA DE CATEGORIA: Ônibus #${ownBus.prefix} (${(ownBus.serviceType || 'convencional').toUpperCase()}) foi escalado na linha de categoria ${(line.serviceType || 'convencional').toUpperCase()} (${origin?.name} ➔ ${dest?.name}) por decisão excepcional do CCO.`, 'warning');
-      }
-    }
-  };
-
-  const handleArriveTripCallback = (tripId: string) => {
-    const trip = trips.find((t) => t.id === tripId);
-    if (!trip) return;
-
-    let destCityId = '';
-    if (trip.isTransfer) {
-      destCityId = trip.transferDestCityId || '';
-    } else {
-      const line = lines.find((l) => l.id === trip.lineId);
-      destCityId = line?.destinationCityId || '';
-    }
-
-    const destCity = cities.find((c) => c.id === destCityId);
-
-    setTrips((prev) => {
-      const next = prev.map((t) => (t.id === tripId ? { ...t, progress: 100, status: 'concluida' as const } : t));
-      stateRef.current.trips = next;
-      return next;
-    });
-
-    const currentMinutes = simTime.day * 1440 + simTime.hour * 60 + simTime.minute;
-
-    if (trip.isPartnerTrip) {
-      const pComp = partners.find((p) => p.id === trip.partnerCompanyId);
-      const isGoingHome = pComp && pComp.baseCityId === destCityId;
-
-      setFleet((prevFleet) => {
-        const pBus = prevFleet.find((b) => b.id === trip.busId);
-        if (!pBus) return prevFleet;
-
-        let next;
-        if (isGoingHome) {
-          // If returning to its own base city, we remove it from the trackable fleet
-          next = prevFleet.filter((b) => b.id !== trip.busId);
+      // If requested to seed demo data
+      if (createDemoData) {
+        const demo = generateDemoData(companyId);
+        
+        if (isLocalMode) {
+          saveToLocalCache(companyId, demo);
         } else {
-          // If at a guest dest city, make it available there for return trips
-          next = prevFleet.map((b) =>
-            b.id === trip.busId ? { ...b, status: 'disponivel', currentCityId: destCityId, availableSince: currentMinutes } : b
-          );
+          // Push demo elements to Firestore in background
+          for (const c of demo.cities) {
+            await setDoc(doc(db, 'cities', c.id), c);
+          }
+          for (const b of demo.buses) {
+            await setDoc(doc(db, 'buses', b.id), b);
+          }
+          for (const l of demo.lines) {
+            await setDoc(doc(db, 'lines', l.id), l);
+          }
+          for (const s of demo.schedules) {
+            await setDoc(doc(db, 'schedules', s.id), s);
+          }
+          for (const t of demo.completedTrips) {
+            await setDoc(doc(db, 'completedTrips', t.id), t);
+          }
         }
-        stateRef.current.fleet = next;
-        return next;
-      });
-
-      const pBus = fleet.find((b) => b.id === trip.busId);
-      const prefixVal = pBus ? `#${pBus.prefix}` : 'Terceirizado';
-
-      let origCityId = '';
-      if (trip.isTransfer) {
-        origCityId = trip.transferOriginCityId || '';
-      } else {
-        const line = lines.find((l) => l.id === trip.lineId);
-        origCityId = line?.originCityId || '';
       }
-      const origCity = cities.find((c) => c.id === origCityId);
 
-      if (isGoingHome) {
-        addLog(`Forçado: Ônibus parceiro ${prefixVal} de "${pComp?.name}" foi forçado a concluir a rota completa ${origCity?.name} ➔ ${destCity?.name} em sua base de origem ${destCity?.name || 'Destino'}.`, 'success');
+      setNewCompanyName('');
+      setNewCompanyCode('');
+      setActiveCompany(newCompany);
+    } catch (e: any) {
+      setCompanyError(`Erro ao criar empresa: ${e.message}`);
+    }
+  };
+
+  // Delete Company Action
+  const handleDeleteCompany = async (companyId: string) => {
+    if (!window.confirm('Tem certeza que deseja remover esta empresa operacional? Todas as suas linhas, frotas e programações serão limpas.')) return;
+    if (activeCompany?.id === companyId) {
+      setActiveCompany(null);
+    }
+
+    try {
+      if (isLocalMode) {
+        const updated = companies.filter(c => c.id !== companyId);
+        setCompanies(updated);
+        localStorage.setItem(`local_companies_${user!.uid}`, JSON.stringify(updated));
+        localStorage.removeItem(`local_data_${user!.uid}_${companyId}`);
       } else {
-        addLog(`Forçado: Ônibus parceiro ${prefixVal} de "${pComp?.name}" encerrou a rota completa ${origCity?.name} ➔ ${destCity?.name} em ${destCity?.name || 'Destino'} e está disponível para a viagem de volta sem regressar vazio.`, 'success');
+        await deleteDoc(doc(db, 'companies', companyId));
+        // Note: cloud subcollections will be dangling, or we clean them. For simulator purposes, this is solid.
       }
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // SEED TO EXISTING ACTIVE COMPANY
+  const handleSeedActiveCompany = async () => {
+    if (!activeCompany) return;
+    if (!window.confirm('Deseja popular esta empresa com dados demonstrativos? Isso irá substituir dados atuais.')) return;
+
+    const demo = generateDemoData(activeCompany.id);
+
+    if (isLocalMode) {
+      setCities(demo.cities);
+      setBuses(demo.buses);
+      setLines(demo.lines);
+      setSchedules(demo.schedules);
+      setCompletedTrips(demo.completedTrips);
+      saveToLocalCache(activeCompany.id, demo);
     } else {
-      setFleet((prev) => {
-        const next = prev.map((b) =>
-          b.id === trip.busId
-            ? { ...b, status: 'disponivel', currentCityId: destCityId || b.currentCityId, availableSince: currentMinutes }
-            : b
-        );
-        stateRef.current.fleet = next;
-        return next;
-      });
-      const bObj = fleet.find((b) => b.id === trip.busId);
-      
-      let origCityId = '';
-      if (trip.isTransfer) {
-        origCityId = trip.transferOriginCityId || '';
-      } else {
-        const line = lines.find((l) => l.id === trip.lineId);
-        origCityId = line?.originCityId || '';
-      }
-      const origCity = cities.find((c) => c.id === origCityId);
-
-      if (trip.isTransfer) {
-        addLog(`Forçado: Translado do ônibus próprio #${bObj?.prefix} (${bObj?.model}) na rota completa ${origCity?.name} ➔ ${destCity?.name} finalizado imediatamente em ${destCity?.name || 'Destino'} por comando do CCO.`, 'success');
-      } else {
-        addLog(`Forçado: Ônibus próprio #${bObj?.prefix} (${bObj?.model}) concluiu a rota completa ${origCity?.name} ➔ ${destCity?.name} imediatamente por comando do CCO.`, 'success');
+      try {
+        // Bulk write to Firestore
+        await Promise.all(demo.cities.map(c => setDoc(doc(db, 'cities', c.id), c)));
+        await Promise.all(demo.buses.map(b => setDoc(doc(db, 'buses', b.id), b)));
+        await Promise.all(demo.lines.map(l => setDoc(doc(db, 'lines', l.id), l)));
+        await Promise.all(demo.schedules.map(s => setDoc(doc(db, 'schedules', s.id), s)));
+        await Promise.all(demo.completedTrips.map(t => setDoc(doc(db, 'completedTrips', t.id), t)));
+      } catch (err) {
+        console.error("Erro no Seed Firestore. Ativando cache local...", err);
+        setIsLocalMode(true);
       }
     }
   };
 
-  // Run the clock ticking triggers based on selected speeds!
+  // SUB-RESOURCES CREATORS
+  // 1. Create City
+  const handleCreateCity = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!cityName || !cityState || !cityCode) {
+      setCityError('Preencha todos os campos da localidade.');
+      return;
+    }
+
+    const codeClean = cityCode.trim().toUpperCase();
+    if (cities.some(c => c.code === codeClean)) {
+      setCityError('Código de cidade (Sigla IATA) já cadastrado.');
+      return;
+    }
+
+    const cityId = `city-${Date.now()}`;
+    const data = {
+      name: cityName.trim(),
+      state: cityState.trim().toUpperCase(),
+      code: codeClean,
+    };
+
+    setCityError('');
+    await updateResource('cities', cityId, data, cities, setCities, 'add');
+    setCityName('');
+    setCityState('');
+    setCityCode('');
+  };
+
+  // 2. Create Bus
+  const handleCreateBus = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!busPlate || !busModel) {
+      setBusError('Preencha os dados da placa e modelo do veículo.');
+      return;
+    }
+
+    const plateClean = busPlate.trim().toUpperCase();
+    if (buses.some(b => b.plate === plateClean)) {
+      setBusError('Já existe um carro cadastrado com esta placa.');
+      return;
+    }
+
+    const busId = `bus-${Date.now()}`;
+    const data = {
+      plate: plateClean,
+      model: busModel.trim(),
+      capacity: getBusCapacity(busServiceType),
+      serviceType: busServiceType,
+      status: 'disponivel'
+    };
+
+    setBusError('');
+    await updateResource('buses', busId, data, buses, setBuses, 'add');
+    setBusPlate('');
+    setBusModel('');
+  };
+
+  // 3. Create Line
+  const handleCreateLine = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!lineOriginCityId || !lineDestinationCityId) {
+      setLineError('Selecione cidades válidas de origem e destino.');
+      return;
+    }
+
+    if (lineOriginCityId === lineDestinationCityId) {
+      setLineError('A origem e o destino não podem ser iguais.');
+      return;
+    }
+
+    if (lineDistance <= 0 || lineDuration <= 0) {
+      setLineError('A distância e duração devem ser maiores que zero.');
+      return;
+    }
+
+    // Check pre-existence
+    const pathExists = lines.some(l => 
+      l.originCityId === lineOriginCityId && l.destinationCityId === lineDestinationCityId && l.serviceType === lineServiceType
+    );
+
+    if (pathExists) {
+      setLineError('Já existe esta rota cadastrada com este mesmo tipo de serviço.');
+      return;
+    }
+
+    const lineId = `line-${Date.now()}`;
+    const data = {
+      originCityId: lineOriginCityId,
+      destinationCityId: lineDestinationCityId,
+      distance: Number(lineDistance),
+      duration: Number(lineDuration),
+      serviceType: lineServiceType
+    };
+
+    setLineError('');
+    await updateResource('lines', lineId, data, lines, setLines, 'add');
+    setLineOriginCityId('');
+    setLineDestinationCityId('');
+    setLineDistance(100);
+    setLineDuration(90);
+  };
+
+  // 4. Create Schedule
+  const handleCreateSchedule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!schedLineId || !schedDepartureTime) {
+      setSchedError('Escolha uma rota/linha e defina o horário de partida.');
+      return;
+    }
+
+    // Validate HH:MM regex
+    const timeReg = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeReg.test(schedDepartureTime.trim())) {
+      setSchedError('Formato de horário inválido. Utilize HH:MM (Ex: 08:30).');
+      return;
+    }
+
+    const schedId = `sched-${Date.now()}`;
+    const data = {
+      lineId: schedLineId,
+      departureTime: schedDepartureTime.trim(),
+      frequency: schedFrequency,
+      serviceType: schedServiceType
+    };
+
+    setSchedError('');
+    await updateResource('schedules', schedId, data, schedules, setSchedules, 'add');
+    setSchedDepartureTime('');
+  };
+
+  // REMOVE ACTIONS
+  const handleDeleteCity = async (id: string) => {
+    if (lines.some(l => l.originCityId === id || l.destinationCityId === id)) {
+      alert('Esta cidade não pode ser removida pois possui rotas intermunicipais vinculadas a ela.');
+      return;
+    }
+    await updateResource('cities', id, null, cities, setCities, 'delete');
+  };
+
+  const handleDeleteBus = async (id: string) => {
+    if (activeVoyages.some(v => v.busId === id)) {
+      alert('Este carro está em viagem ativa simulada e não pode ser removido.');
+      return;
+    }
+    await updateResource('buses', id, null, buses, setBuses, 'delete');
+  };
+
+  const handleDeleteLine = async (id: string) => {
+    if (schedules.some(s => s.lineId === id)) {
+      alert('Remova todos os horários agendados desta linha antes de removê-la.');
+      return;
+    }
+    await updateResource('lines', id, null, lines, setLines, 'delete');
+  };
+
+  const handleDeleteSchedule = async (id: string) => {
+    if (activeVoyages.some(v => v.scheduleId === id)) {
+      alert('Há uma viagem ativa ocorrendo neste exato horário no simulador de tráfego.');
+      return;
+    }
+    await updateResource('schedules', id, null, schedules, setSchedules, 'delete');
+  };
+
+  // SIMULATOR ENGINE (TABS & LIVE DEPARTURES TIMELINE)
+  // Starts a voyage based on a programmed schedule
+  const handleStartSimulatedVoyage = (schedule: Schedule) => {
+    const line = lines.find(l => l.id === schedule.lineId);
+    if (!line) return;
+
+    // Find a vacant bus of correct service type or fallback to available
+    const availableBuses = buses.filter(b => b.status === 'disponivel');
+    const exactMatch = availableBuses.find(b => b.serviceType === schedule.serviceType);
+    const delegatedBus = exactMatch || availableBuses[0];
+
+    if (!delegatedBus) {
+      alert('Erro operacional: Não há nenhum carro disponível na garagem central neste momento para iniciar a viagem.');
+      return;
+    }
+
+    // Demand estimation calculations
+    const projection = getScheduleDemandEstimation(schedule.lineId, schedule.departureTime, schedule.frequency, schedule.id, schedule.serviceType, lines);
+    const paxCount = projection 
+      ? Math.round(projection.pMin + Math.random() * (projection.pMax - projection.pMin))
+      : Math.round(delegatedBus.capacity * 0.6);
+
+    // Calculate simulated price per ticket (e.g. R$ 0.40 per km * service modifier)
+    let modifier = 1.0;
+    if (schedule.serviceType === 'executivo') modifier = 1.35;
+    if (schedule.serviceType === 'leito') modifier = 1.95;
+    const ticketPrice = Math.round(line.distance * 0.38 * modifier);
+
+    const voyageId = `voyage-${Date.now()}`;
+    const newVoyage = {
+      id: voyageId,
+      scheduleId: schedule.id,
+      lineId: schedule.lineId,
+      busId: delegatedBus.id,
+      departureTime: schedule.departureTime,
+      progress: 0,
+      passengerCount: Math.min(delegatedBus.capacity, paxCount),
+      ticketPrice
+    };
+
+    // Set bus status as occupied
+    updateResource('buses', delegatedBus.id, { ...delegatedBus, status: 'em_viagem' }, buses, setBuses, 'update');
+    setActiveVoyages(prev => [...prev, newVoyage]);
+  };
+
+  // Progress Active Voyages
   useEffect(() => {
-    if (simSpeed === 0) return;
+    const interval = setInterval(() => {
+      setActiveVoyages(prev => 
+        prev.map(v => {
+          const nextProgress = v.progress + Math.round(5 + Math.random() * 15);
+          return {
+            ...v,
+            progress: Math.min(100, nextProgress)
+          };
+        })
+      );
+    }, 4500);
 
-    const intervalVal = 1000; // tick every 1000ms
-    const timer = setInterval(() => {
-      // 1x = advances 2m, 5x = advances 10m, 15x = advances 30m
-      const stepMins = simSpeed === 15 ? 30 : simSpeed === 5 ? 10 : 2;
-      advanceSimulation(stepMins);
-    }, intervalVal);
+    return () => clearInterval(interval);
+  }, []);
 
-    return () => clearInterval(timer);
-  }, [simSpeed]);
+  // Complete Simulated Voyage
+  const handleCompleteVoyage = async (voyageId: string) => {
+    const voyage = activeVoyages.find(v => v.id === voyageId);
+    if (!voyage) return;
 
-  // Tab dynamic colors mapping
-  const activeColorThemeClass = (() => {
-    const tc = company?.themeColor || 'indigo';
-    if (tc === 'emerald') return 'text-emerald-500 border-emerald-500 bg-emerald-500/10';
-    if (tc === 'amber') return 'text-amber-500 border-amber-500 bg-amber-500/10';
-    if (tc === 'rose') return 'text-rose-500 border-rose-500 bg-rose-500/10';
-    if (tc === 'sky') return 'text-sky-500 border-sky-500 bg-sky-500/10';
-    return 'text-indigo-400 border-indigo-500 bg-indigo-500/10';
-  })();
+    const bus = buses.find(b => b.id === voyage.busId);
+    const line = lines.find(l => l.id === voyage.lineId);
+    if (!line || !bus) return;
 
-  const btnThemeClass = (() => {
-    const tc = company?.themeColor || 'indigo';
-    if (tc === 'emerald') return 'bg-emerald-600 hover:bg-emerald-500 shadow-emerald-500/10 text-white';
-    if (tc === 'amber') return 'bg-amber-500 hover:bg-amber-400 shadow-amber-500/10 text-slate-950';
-    if (tc === 'rose') return 'bg-rose-600 hover:bg-rose-500 shadow-rose-500/10 text-white';
-    if (tc === 'sky') return 'bg-sky-600 hover:bg-sky-500 shadow-sky-500/10 text-white';
-    return 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-500/10 text-white';
-  })();
+    const revenue = voyage.passengerCount * voyage.ticketPrice;
+    const occupancyRate = Math.round((voyage.passengerCount / bus.capacity) * 100);
 
-  const borderAccentClass = (() => {
-    const tc = company?.themeColor || 'indigo';
-    if (tc === 'emerald') return 'border-emerald-500/40 text-emerald-450';
-    if (tc === 'amber') return 'border-amber-550/40 text-amber-400';
-    if (tc === 'rose') return 'border-rose-500/40 text-rose-450';
-    if (tc === 'sky') return 'border-sky-500/40 text-sky-450';
-    return 'border-indigo-500/40 text-indigo-400';
-  })();
+    const tripId = `trip-done-${Date.now()}`;
+    const completedRecord: CompletedTrip = {
+      id: tripId,
+      scheduleId: voyage.scheduleId,
+      lineId: voyage.lineId,
+      busId: voyage.busId,
+      departureTime: voyage.departureTime,
+      date: new Date().toISOString().split('T')[0],
+      passengerCount: voyage.passengerCount,
+      revenue,
+      occupancyRate,
+      companyId: activeCompany!.id
+    };
 
-  // Render Onboarding setup screen if company is not registered yet
-  if (!company) {
-    return <CompanySetup onSetupComplete={handleSetupComplete} />;
-  }
+    // Save completed trip record
+    await updateResource('completedTrips', tripId, completedRecord, completedTrips, setCompletedTrips, 'add');
 
-  const logoAcronym = company.name ? company.name.split(' ').map(w => w[0]).join('').substring(0, 3).toUpperCase() : 'EB';
+    // Free the bus status
+    await updateResource('buses', bus.id, { ...bus, status: 'disponivel' }, buses, setBuses, 'update');
+
+    // Clear active voyage from list
+    setActiveVoyages(prev => prev.filter(v => v.id !== voyageId));
+  };
+
+  // ANALYTICS CALCULATIONS
+  const totalRevenue = completedTrips.reduce((acc, curr) => acc + curr.revenue, 0);
+  const totalPassengers = completedTrips.reduce((acc, curr) => acc + curr.passengerCount, 0);
+  const avgOccupancy = completedTrips.length > 0 
+    ? Math.round(completedTrips.reduce((acc, curr) => acc + curr.occupancyRate, 0) / completedTrips.length)
+    : 0;
+
+  // Process chart data for past billing
+  const getRevenueChartData = () => {
+    // Group by date
+    const grouped: { [key: string]: { revenue: number, paxs: number } } = {};
+    completedTrips.forEach(t => {
+      // Human friendly date DD/MM
+      const parts = t.date.split('-');
+      const label = parts.length === 3 ? `${parts[2]}/${parts[1]}` : t.date;
+      if (!grouped[label]) {
+        grouped[label] = { revenue: 0, paxs: 0 };
+      }
+      grouped[label].revenue += t.revenue;
+      grouped[label].paxs += t.passengerCount;
+    });
+
+    return Object.keys(grouped).map(k => ({
+      data: k,
+      Faturamento: Math.round(grouped[k].revenue),
+      Passageiros: grouped[k].paxs
+    })).reverse().slice(-7); // Last 7 records
+  };
+
+  // Distribution chart for services
+  const getServiceDistributionData = () => {
+    const counts = { convencional: 0, executivo: 0, leito: 0 };
+    buses.forEach(b => {
+      counts[b.serviceType]++;
+    });
+    return [
+      { name: '🚌 Convencional', value: counts.convencional, color: '#64748b' },
+      { name: '🌟 Executivo', value: counts.executivo, color: '#2563eb' },
+      { name: '💤 Leito', value: counts.leito, color: '#8b5cf6' },
+    ].filter(item => item.value > 0);
+  };
 
   return (
-    <div className="h-screen w-full bg-slate-100 flex overflow-hidden font-sans text-slate-900">
+    <div className="min-h-screen bg-slate-900 text-slate-100 flex flex-col selection:bg-blue-600 selection:text-white">
       
-      {/* Sidebar Navigation */}
-      <aside className="w-68 bg-slate-900 flex flex-col border-r border-slate-800 text-slate-300 shrink-0 select-none">
-        
-        {/* Sidebar Logo/Header */}
-        <div className="p-6 border-b border-slate-800 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-600 rounded flex items-center justify-center font-extrabold text-white text-lg tracking-wider shadow">
-              {logoAcronym}
-            </div>
-            <div className="overflow-hidden">
-              <h1 className="text-white font-bold leading-none tracking-tight text-base truncate" title={company.name}>
-                {company.name}
+      {/* 1. INITIAL AUTH SCREEN */}
+      {!user ? (
+        <div className="flex-1 flex flex-col justify-center items-center p-4">
+          <div className="w-full max-w-md bg-slate-800/80 backdrop-blur-md rounded-2xl border border-slate-700/60 shadow-2xl p-6 space-y-6">
+            
+            {/* Header branding */}
+            <div className="text-center space-y-2">
+              <div className="w-12 h-12 bg-blue-600 rounded-xl flex items-center justify-center mx-auto text-white shadow-lg shadow-blue-500/20">
+                <BusIcon size={24} />
+              </div>
+              <h1 className="text-xl font-extrabold tracking-tight text-white font-sans sm:text-2xl">
+                ViagemPro Operational
               </h1>
-              <p className="text-[10px] text-slate-400 mt-1 uppercase tracking-widest font-semibold">Operação Logística</p>
+              <p className="text-xs text-slate-400 max-w-xs mx-auto">
+                Planejamento estratégico de linhas, frotas, tabelas de saída e análise de demanda de passageiros.
+              </p>
             </div>
-          </div>
-        </div>
 
-        {/* Navigation items */}
-        <nav className="flex-1 p-4 space-y-2 overflow-y-auto">
-          <button
-            onClick={() => setActiveTab('dashboard')}
-            className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition-colors text-xs font-semibold ${
-              activeTab === 'dashboard'
-                ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-600'
-                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-            }`}
-          >
-            <LayoutDashboard size={16} />
-            <span>Painel de Controle (CCO)</span>
-          </button>
+            {/* Local mode indicator */}
+            {isLocalMode && (
+              <div className="p-3 bg-amber-500/10 border border-amber-500/25 rounded-lg flex items-start gap-2.5">
+                <Database size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                <div className="text-[11px] text-amber-300 leading-normal">
+                  <span className="font-bold">Modo Offline Ativado:</span> O banco Firestore não pôde ser contatado. Seus dados serão mantidos de forma isolada e segura no seu cache local.
+                </div>
+              </div>
+            )}
 
-          <button
-            onClick={() => setActiveTab('cities')}
-            className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition-colors text-xs font-semibold ${
-              activeTab === 'cities'
-                ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-600'
-                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-            }`}
-          >
-            <Globe size={16} />
-            <span>Cidades ({cities.length})</span>
-          </button>
+            {/* Error notifications */}
+            {authError && (
+              <div className="p-3 bg-red-500/15 border border-red-500/25 text-red-300 rounded-lg text-xs font-semibold leading-normal font-sans">
+                ⚠️ {authError}
+              </div>
+            )}
 
-          <button
-            onClick={() => setActiveTab('lines')}
-            className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition-colors text-xs font-semibold ${
-              activeTab === 'lines'
-                ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-600'
-                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-            }`}
-          >
-            <Map size={16} />
-            <span>Linhas & Agendas ({lines.length})</span>
-          </button>
+            {/* Success notification */}
+            {authSuccess && (
+              <div className="p-3 bg-green-500/15 border border-green-500/25 text-green-300 rounded-lg text-xs font-semibold leading-normal font-sans">
+                ✨ {authSuccess}
+              </div>
+            )}
 
-          <button
-            onClick={() => setActiveTab('fleet')}
-            className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition-colors text-xs font-semibold ${
-              activeTab === 'fleet'
-                ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-600'
-                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-            }`}
-          >
-            <BusIcon size={16} />
-            <span>Frota Garagem ({fleet.filter(b => !b.isPartner).length})</span>
-          </button>
+            {/* Form */}
+            <form onSubmit={handleEmailAuthSubmit} className="space-y-4">
+              <div className="space-y-1.5 focus-within:text-blue-500">
+                <label className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">E-mail Corporativo</label>
+                <input 
+                  type="email" 
+                  required
+                  placeholder="sua.empresa@viagempro.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 focus:border-blue-500 text-white rounded-lg text-xs placeholder:text-slate-500 focus:outline-none transition-colors"
+                />
+              </div>
 
-          <button
-            onClick={() => setActiveTab('projection')}
-            className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition-colors text-xs font-semibold ${
-              activeTab === 'projection'
-                ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-600'
-                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-            }`}
-          >
-            <TrendingUp size={16} />
-            <span className="flex items-center gap-1.5 justify-between w-full">
-              <span>Projeção de Demanda</span>
-              <span className="bg-blue-900/40 text-blue-300 text-[9px] font-extrabold px-1.5 py-0.5 rounded-full uppercase tracking-wider">Prever</span>
-            </span>
-          </button>
+              <div className="space-y-1.5 focus-within:text-blue-500">
+                <label className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Senha</label>
+                <input 
+                  type="password" 
+                  required
+                  placeholder="Mínimo de 6 dígitos"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 focus:border-blue-500 text-white rounded-lg text-xs placeholder:text-slate-500 focus:outline-none transition-colors"
+                />
+              </div>
 
-          <button
-            onClick={() => setActiveTab('completed')}
-            className={`w-full text-left p-3 rounded-lg flex items-center gap-3 transition-colors text-xs font-semibold ${
-              activeTab === 'completed'
-                ? 'bg-blue-600/15 text-blue-400 border-l-4 border-blue-600'
-                : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
-            }`}
-          >
-            <CheckCircle2 size={16} />
-            <span className="flex items-center gap-1.5 justify-between w-full">
-              <span>Viagens Concluídas</span>
-              <span className="bg-emerald-950/60 text-emerald-300 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                {trips.filter(t => t.status === 'concluida').length}
+              <button
+                type="submit"
+                disabled={authLoading}
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-blue-600/15"
+              >
+                {authLoading ? 'Verificando credenciais...' : isSignUp ? 'Criar Nova Conta' : 'Entrar na Plataforma'}
+              </button>
+            </form>
+
+            <div className="flex justify-between items-center text-[11px] text-slate-400">
+              <span>{isSignUp ? 'Já possui login?' : 'Novo por aqui?'}</span>
+              <button 
+                onClick={() => setIsSignUp(!isSignUp)}
+                className="text-blue-400 hover:text-blue-300 font-extrabold focus:outline-none transition-colors"
+              >
+                {isSignUp ? 'Fazer Login' : 'Criar Conta de Acesso'}
+              </button>
+            </div>
+
+            {/* Alternatives */}
+            <div className="relative pt-2">
+              <div className="absolute inset-0 flex items-center" aria-hidden="true">
+                <div className="w-full border-t border-slate-700/60"></div>
+              </div>
+              <div className="relative flex justify-center text-xs uppercase">
+                <span className="bg-slate-800 px-2 text-[10px] text-slate-400 font-bold">Alternativas de Acesso</span>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={handleGoogleSignIn}
+                disabled={authLoading}
+                className="py-2 px-3 bg-slate-900/60 hover:bg-slate-900 border border-slate-700 text-slate-300 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all"
+              >
+                <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
+                  <path fill="#EA4335" d="M12 5.04c1.62 0 3.08.56 4.22 1.65l3.15-3.15C17.45 1.74 14.93 1 12 1 7.37 1 3.42 3.73 1.58 7.72l3.77 2.92C6.22 7.37 8.87 5.04 12 5.04z"/>
+                  <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.36H12v4.51h6.46a5.53 5.53 0 0 1-2.4 3.63l3.76 2.92c2.2-2.03 3.47-5.01 3.47-8.7z"/>
+                  <path fill="#FBBC05" d="M5.35 15.36c-.24-.72-.38-1.49-.38-2.36s.14-1.64.38-2.36L1.58 7.72A11.96 11.96 0 0 0 0 13c0 1.93.46 3.74 1.28 5.38l4.07-3.02z"/>
+                  <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.92l-3.76-2.92c-1.1.74-2.52 1.18-4.2 1.18-3.13 0-5.78-2.33-6.73-5.59L1.5 15.68C3.33 19.74 7.32 23 12 23z"/>
+                </svg>
+                Google LogIn
+              </button>
+
+              <button
+                type="button"
+                onClick={handleGuestDemoMode}
+                className="py-2 px-3 bg-gradient-to-r from-blue-700/60 to-purple-700/60 hover:from-blue-700/80 hover:to-purple-700/80 border border-blue-500/30 text-white rounded-lg text-[11px] font-extrabold flex items-center justify-center gap-1.5 transition-all"
+              >
+                <Sparkles size={13} className="text-yellow-300" />
+                Modo Piloto
+              </button>
+            </div>
+
+            {/* Troubleshooting Alert */}
+            <div className="bg-slate-900/40 p-3 rounded-lg border border-slate-700/60 text-[11px] space-y-1.5">
+              <span className="font-extrabold text-blue-400 flex items-center gap-1">
+                <Info size={12} /> Solução de Erro de Conexão (Google)
               </span>
-            </span>
-          </button>
+              <p className="text-slate-400 leading-normal">
+                Se você receber o erro de <span className="text-rose-400 font-mono">auth/domínio não autorizado</span> ao usar a integração Google fora do AI Studio, adicione o URL atual da barra de endereços na lista de <strong>Domínios Autorizados</strong> dentro do painel do seu Console Firebase (Autenticação → Configurações → Domínios Autorizados).
+              </p>
+            </div>
 
-          <div className="border-t border-slate-800/60 my-4" />
-
-          <button
-            onClick={handleReset}
-            className="w-full text-left p-3 rounded-lg flex items-center gap-3 text-xs font-semibold text-rose-400 hover:bg-rose-500/10 active:scale-[0.98] transition-all cursor-pointer"
-          >
-            <Trash2 size={16} />
-            <span>Recomeçar do Zero</span>
-          </button>
-        </nav>
-
-        {/* Sidebar System Footer */}
-        <div className="p-6 mt-auto border-t border-slate-800 shrink-0 space-y-3">
-          <div className="flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-            <span className="text-[10px] text-slate-350 font-bold tracking-wider uppercase">SISTEMA ONLINE</span>
-          </div>
-          <div className="flex justify-between items-center text-[10px] text-slate-500 font-mono">
-            <span>V1.4.2-DEF</span>
-            <button
-              onClick={handleReset}
-              className="text-slate-500 hover:text-rose-400 hover:bg-rose-500/10 p-1 rounded transition-colors"
-              title="Reiniciar Operação Completa"
-            >
-              <LogOut size={12} />
-            </button>
           </div>
         </div>
-      </aside>
-
-      {/* Main Content Area */}
-      <main className="flex-1 flex flex-col overflow-hidden">
+      ) : (
         
-        {/* Header */}
-        <header className="h-20 bg-white border-b border-slate-200 px-8 flex items-center justify-between shrink-0 shadow-sm z-10 transition-all">
-          <div>
-            <h2 className="text-lg font-extrabold text-slate-850 leading-none">{company.name}</h2>
-            <p className="text-xs text-slate-500 mt-1">Sede Regional: {cities[0]?.name || 'Polo Inicial'}</p>
-          </div>
+        /* 2. AUTHENTICATED STATES */
+        <div className="flex-1 flex flex-col">
           
-          <div className="flex items-center gap-6">
-            <div className="text-right border-r pr-6 border-slate-100 hidden sm:block">
-              <p className="text-[10px] text-slate-400 uppercase font-black tracking-wider leading-none">Demanda Global</p>
-              <p className="text-sm font-bold text-orange-600 mt-1 uppercase">Alta ({Math.min(100, Math.max(10, 50 + (trips.length * 4)))}%)</p>
-            </div>
-
-            <div className="text-right border-r pr-6 border-slate-100">
-              <p className="text-[10px] text-slate-400 uppercase font-black tracking-wider leading-none">Relógio do Sistema</p>
-              <p className="text-sm font-bold text-slate-800 mt-1 font-mono">
-                Dia {simTime.day} • {String(simTime.hour).padStart(2, '0')}:{String(simTime.minute).padStart(2, '0')}
-              </p>
-            </div>
-
-            <div className="text-right hidden md:block">
-              <p className="text-[10px] text-slate-400 uppercase font-black tracking-wider leading-none">Frota em Trânsito</p>
-              <p className="text-sm font-semibold text-slate-800 mt-1">
-                {trips.filter(t => t.status === 'em_curso').length} / {fleet.length} active
-              </p>
-            </div>
-
-            <UserAuthSection />
-          </div>
-        </header>
-
-        {/* Inner Content Component (Scrollable Area) */}
-        <div className="flex-1 overflow-y-auto p-8 bg-slate-100 flex flex-col gap-6">
-          
-          {/* Global Centro de Controle Header Card */}
-          <div className="sticky top-[-32px] z-30 p-6 bg-white border border-slate-200 rounded-xl shadow-md flex flex-col md:flex-row justify-between items-strong md:items-center gap-6 shrink-0">
-            <div className="flex items-center gap-4">
-              <div className="p-3.5 bg-blue-50 text-blue-600 rounded-xl border border-blue-100 shadow-sm">
-                <Clock size={24} className={simSpeed > 0 ? 'animate-spin' : ''} style={{ animationDuration: simSpeed === 15 ? '3s' : simSpeed === 5 ? '8s' : '15s' }} />
-              </div>
-              <div>
-                <span className="text-[10px] font-extrabold uppercase tracking-widest text-slate-400">Centro de Controle - CCO</span>
-                <div className="flex items-baseline gap-2 mt-0.5">
-                  <h2 className="text-3xl font-black text-slate-900 font-mono tracking-wider">
-                    {formatTimeStr(simTime.hour, simTime.minute)}
-                  </h2>
-                  <span className="text-xs font-bold text-blue-600 bg-blue-50 border border-blue-100 px-2.5 py-0.5 rounded-full font-mono">
-                    DIA {simTime.day} • {getDayPT(simTime.day).toUpperCase()}
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-500 mt-0.5 font-medium">
-                  Sede operacional: <strong className="text-slate-700">{company.name}</strong> • Cidade-sede: <strong className="text-slate-700">{cities[0]?.name || 'Sede'}</strong>
-                </p>
-              </div>
-            </div>
-
-            {/* Speed Controls */}
-            <div className="flex flex-wrap items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200">
-              <span className="text-[10px] uppercase font-extrabold text-slate-500 px-2 tracking-wider font-sans">Simulador</span>
-              
-              <div className="flex items-center gap-1 border-r border-slate-200 pr-3">
-                <button
-                  onClick={() => setSimSpeed(0)}
-                  className={`p-2 rounded-lg transition-all cursor-pointer ${
-                    simSpeed === 0 ? 'bg-rose-500 text-white' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                  title="Pausar Operação"
-                >
-                  <Pause size={14} />
-                </button>
-                <button
-                  onClick={() => setSimSpeed(1)}
-                  className={`p-2 rounded-lg transition-all cursor-pointer ${
-                    simSpeed === 1 ? 'bg-blue-600 text-white' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                  title="Velocidade Normal 1x"
-                >
-                  <Play size={14} />
-                </button>
-                <button
-                  onClick={() => setSimSpeed(5)}
-                  className={`p-2 rounded-lg transition-all cursor-pointer ${
-                    simSpeed === 5 ? 'bg-amber-500 text-slate-900' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                  title="Velocidade Acelerada 5x"
-                >
-                  <FastForward size={14} />
-                </button>
-                <button
-                  onClick={() => setSimSpeed(15)}
-                  className={`p-2 rounded-lg transition-all cursor-pointer ${
-                    simSpeed === 15 ? 'bg-emerald-500 text-slate-900' : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                  title="Velocidade Máxima 15x"
-                >
-                  <RefreshCw size={14} />
-                </button>
-              </div>
-
-              <div className="flex items-center gap-1.5 pl-1.5">
-                <button
-                  onClick={() => advanceSimulation(15)}
-                  className="px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-[10px] font-bold rounded-lg cursor-pointer transition-colors"
-                >
-                  +15m
-                </button>
-                <button
-                  onClick={() => advanceSimulation(60)}
-                  className="px-2.5 py-1.5 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 text-[10px] font-bold rounded-lg cursor-pointer transition-colors"
-                >
-                  +1h
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="flex-1">
-            {activeTab === 'dashboard' && (
-            <OpsDashboard
-              company={company}
-              cities={cities}
-              fleet={fleet}
-              lines={lines}
-              schedules={schedules}
-              trips={trips}
-              logs={logs}
-              partners={partners}
-              simTime={simTime}
-              simSpeed={simSpeed}
-              setSimSpeed={setSimSpeed}
-              onAdvanceTime={advanceSimulation}
-              onManualDispatch={handleManualDispatchCallback}
-              onSetStatus={handleUpdateBusStatus}
-              onArriveTrip={handleArriveTripCallback}
-              accumulatedPassengers={accumulatedPassengers}
-            />
-          )}
-
-          {activeTab === 'cities' && (
-            <CityManager
-              cities={cities}
-              partners={partners}
-              fleet={fleet}
-              simTime={simTime}
-              onAddCity={handleAddCity}
-              onDeleteCity={handleDeleteCity}
-            />
-          )}
-
-          {activeTab === 'lines' && (
-            <LineManager
-              lines={lines}
-              schedules={schedules}
-              cities={cities}
-              fleet={fleet}
-              onAddLine={handleAddLine}
-              onDeleteLine={handleDeleteLine}
-              onAddSchedule={handleAddSchedule}
-              onDeleteSchedule={handleDeleteSchedule}
-              onUpdateSchedule={handleUpdateSchedule}
-            />
-          )}
-
-          {activeTab === 'fleet' && (
-            <FleetManager
-              fleet={fleet}
-              cities={cities}
-              trips={trips}
-              lines={lines}
-              onAddBus={handleAddBus}
-              onUpdateBusStatus={handleUpdateBusStatus}
-              onUpdateBusLocation={handleUpdateBusLocation}
-              onDeleteBus={handleDeleteBus}
-              onStartTransferTrip={handleStartTransferTrip}
-              onUpdateBusServiceType={handleUpdateBusServiceType}
-            />
-          )}
-
-          {activeTab === 'projection' && (
-            <DemandProjection
-              cities={cities}
-              lines={lines}
-              schedules={schedules}
-              partners={partners}
-              trips={trips}
-              simTime={simTime}
-            />
-          )}
-
-          {activeTab === 'completed' && (
-            <CompletedTrips
-              trips={trips}
-              lines={lines}
-              fleet={fleet}
-              cities={cities}
-            />
-          )}
-          </div>
-        </div>
-
-        {/* Custom state-based Reset Confirmation Modal */}
-        {showResetConfirm && (
-          <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-              <div className="flex items-center gap-3 text-rose-600 mb-4">
-                <div className="p-2 bg-rose-50 rounded-lg">
-                  <Trash2 size={24} />
-                </div>
-                <h3 className="text-lg font-bold text-slate-850">Recomeçar do Zero?</h3>
-              </div>
-              <p className="text-slate-650 text-xs mb-6 leading-relaxed">
-                Atenção: Isso excluirá permanentemente todos os dados operacionais atuais da sua empresa <strong>"{company?.name}"</strong>, incluindo frotas rodoviárias, cidades polo adicionadas, agendas e viagens em trânsito. Você retornará à tela de onboarding inicial.
-              </p>
-              <div className="flex items-center gap-3 justify-end">
-                <button
-                  onClick={() => setShowResetConfirm(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={() => {
-                    setShowResetConfirm(false);
-                    handleRawReset();
-                  }}
-                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors shadow-sm"
-                >
-                  Sim, Apagar Tudo e Recomeçar
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Custom state-based Delete City Confirmation Modal */}
-        {deletingCityId !== null && (() => {
-          const city = cities.find((c) => c.id === deletingCityId);
-          return (
-            <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-slate-200 animate-in fade-in zoom-in-95 duration-150">
-                <div className="flex items-center gap-3 text-amber-600 mb-4">
-                  <div className="p-2 bg-amber-50 rounded-lg">
-                    <AlertTriangle size={24} />
+          {/* A. MULTI-COMPANY WORKSPACE SELECTOR */}
+          {!activeCompany ? (
+            <div className="flex-1 flex flex-col justify-center items-center p-6">
+              <div className="w-full max-w-4xl space-y-8 animate-fade-in">
+                
+                {/* Selector Header Bar */}
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-5">
+                  <div className="space-y-1">
+                    <span className="text-xs font-black text-blue-500 uppercase tracking-widest font-mono">Seletor de Concessionárias</span>
+                    <h2 className="text-2.5xl font-extrabold text-white tracking-tight">Suas Empresas Registradas</h2>
+                    <p className="text-xs text-slate-400">Entre em uma empresa operacional existente ou abra uma nova operação regional.</p>
                   </div>
-                  <h3 className="text-lg font-bold text-slate-850">Excluir cidade?</h3>
+                  
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-bold text-slate-400 font-mono bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">
+                      👤 {user.email}
+                    </span>
+                    <button
+                      onClick={handleSignOut}
+                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:text-rose-400 text-xs font-bold rounded-lg transition-colors flex items-center gap-1"
+                    >
+                      <LogOut size={13} /> Sair
+                    </button>
+                  </div>
                 </div>
-                <p className="text-slate-650 text-xs mb-6 leading-relaxed">
-                  Você tem certeza que deseja excluir a cidade de <strong>"{city?.name} ({city?.state})"</strong>? Isso removerá automaticamente todas as linhas rodoviárias em trânsito, escalas operacionais e contratos de empresas parceiras associados a essa cidade.
-                </p>
-                <div className="flex items-center gap-3 justify-end">
-                  <button
-                    onClick={() => setDeletingCityId(null)}
-                    className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-semibold cursor-pointer transition-colors"
-                  >
-                    Cancelar
-                  </button>
-                  <button
-                    onClick={() => executeDeleteCity(deletingCityId)}
-                    className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors shadow-sm"
-                  >
-                    Excluir Polo Regional
-                  </button>
+
+                {/* Company Setup Grid */}
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
+                  
+                  {/* Left Column: Create new company */}
+                  <div className="md:col-span-5 bg-slate-800/60 rounded-2xl border border-slate-800 p-5 space-y-4 self-start">
+                    <div className="flex items-center gap-2">
+                      <div className="p-1.5 bg-blue-500/10 text-blue-400 rounded-lg">
+                        <Building2 size={18} />
+                      </div>
+                      <h3 className="text-sm font-black text-white uppercase tracking-wider">Registrar Concessionária</h3>
+                    </div>
+
+                    {companyError && (
+                      <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-300 rounded text-xs font-medium">
+                        ⚠️ {companyError}
+                      </div>
+                    )}
+
+                    <form className="space-y-4">
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Nome Fantasia da Linha</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Ex: Viação Cometa SP"
+                          value={newCompanyName}
+                          onChange={(e) => setNewCompanyName(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+
+                      <div className="space-y-1">
+                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Sigla de Frota / Identificador</label>
+                        <input
+                          type="text"
+                          required
+                          placeholder="Ex: VCT (Max 4 letras)"
+                          maxLength={4}
+                          value={newCompanyCode}
+                          onChange={(e) => setNewCompanyCode(e.target.value)}
+                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500 uppercase font-mono font-bold"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-2 pt-2">
+                        <button
+                          type="button"
+                          onClick={(e) => handleCreateCompanySubmit(e, false)}
+                          className="w-full py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-white rounded text-xs font-extrabold transition-all cursor-pointer"
+                        >
+                          Criar Empresa Vazia
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => handleCreateCompanySubmit(e, true)}
+                          className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-extrabold transition-all flex items-center justify-center gap-1 cursor-pointer"
+                        >
+                          <Sparkles size={13} className="text-yellow-300" /> Criar e Popular com Linhas Demo
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+
+                  {/* Right Column: Grid list of existing companies */}
+                  <div className="md:col-span-7 space-y-4">
+                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block">Selecione uma Con concessionária Ativa</span>
+
+                    {companies.length === 0 ? (
+                      <div className="bg-slate-800/20 border border-slate-800/80 border-dashed rounded-2xl p-12 text-center space-y-3">
+                        <Building2 size={36} className="text-slate-600 mx-auto" />
+                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nenhuma Empresa Cadastrada</h4>
+                        <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
+                          Utilize o formulário ao lado para registrar sua primeira empresa de ônibus. Escolha a opção "Criar e Popular" para testar instantaneamente com rotas simuladas intermunicipais!
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {companies.map(comp => (
+                          <div
+                            key={comp.id}
+                            className="bg-slate-800/60 hover:bg-slate-800 border border-slate-800 hover:border-blue-500/35 p-4 rounded-xl flex flex-col justify-between h-36 transition-all group shadow-sm hover:shadow-lg hover:shadow-blue-900/5 relative"
+                          >
+                            <div className="space-y-1">
+                              <span className="inline-block py-0.5 px-2 bg-blue-500/10 text-blue-400 text-[10px] font-mono font-bold uppercase rounded-md mb-1.5 border border-blue-500/10">
+                                Sigla: {comp.code}
+                              </span>
+                              <h4 className="text-sm font-extrabold text-white pr-6 group-hover:text-blue-400 transition-colors line-clamp-1">{comp.name}</h4>
+                              <p className="text-[10px] text-slate-400 font-mono">Gerado em: {new Date(comp.createdAt).toLocaleDateString('pt-BR')}</p>
+                            </div>
+
+                            <div className="flex justify-between items-center pt-2">
+                              <button
+                                onClick={() => setActiveCompany(comp)}
+                                className="px-3.5 py-1.5 bg-blue-600/10 hover:bg-blue-600 border border-blue-500/20 text-blue-400 hover:text-white text-[11px] font-extrabold rounded-md transition-all flex items-center gap-1 cursor-pointer"
+                              >
+                                Entrar no Painel <ChevronRight size={11} />
+                              </button>
+
+                              <button
+                                onClick={() => handleDeleteCompany(comp.id)}
+                                className="text-slate-500 hover:text-red-400 p-1 rounded hover:bg-red-500/10 transition-colors"
+                                title="Deletar empresa"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                  </div>
+
                 </div>
+
               </div>
             </div>
-          );
-        })()}
-      </main>
+          ) : (
+            
+            /* B. CORE ACTIVE COMPANY BUSINESS TERMINAL */
+            <div className="flex-1 flex flex-col md:flex-row">
+              
+              {/* Sidebar Tabs */}
+              <div className="w-full md:w-64 bg-slate-850 border-r border-slate-800/80 flex flex-col justify-between">
+                
+                {/* Company details brand */}
+                <div className="p-4 border-b border-slate-800/80 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-blue-600 text-white rounded-lg font-mono font-black text-xs">
+                      {activeCompany.code}
+                    </div>
+                    <div className="truncate">
+                      <h3 className="text-xs font-black text-white uppercase tracking-wider truncate">{activeCompany.name}</h3>
+                      <span className="text-[10px] text-slate-400 font-mono block">Operação Regional Ativa</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5 pt-1">
+                    <button
+                      onClick={() => {
+                        setActiveCompany(null);
+                        setActiveTab('dashboard');
+                      }}
+                      className="w-full py-1.5 px-2 bg-slate-800 hover:bg-slate-700/80 text-[10px] font-bold uppercase text-slate-300 hover:text-white rounded border border-slate-700 text-center transition-all flex items-center justify-center gap-1"
+                    >
+                      🔄 Alternar Empresa
+                    </button>
+                    
+                    <button
+                      onClick={handleSeedActiveCompany}
+                      className="w-full py-1.5 px-2 bg-slate-900 hover:bg-slate-800/80 text-[9px] font-extrabold uppercase text-amber-400 hover:text-amber-350 rounded border border-amber-500/20 text-center transition-all flex items-center justify-center gap-1"
+                    >
+                      ✨ Popular Dados Demo
+                    </button>
+                  </div>
+                </div>
+
+                {/* Tab Navigation Menu */}
+                <div className="flex-1 p-3 space-y-1">
+                  {[
+                    { id: 'dashboard', label: 'Dashboard Operacional', icon: TrendingUp },
+                    { id: 'cities', label: 'Cidades Atendidas', icon: MapPin },
+                    { id: 'fleet', label: 'Gestão de Frota', icon: BusIcon },
+                    { id: 'lines', label: 'Gestão de Linhas', icon: GitCommit },
+                    { id: 'schedules', label: 'Agenda e Saídas', icon: Calendar },
+                    { id: 'simulator', label: 'Simulador de Tráfego', icon: Play },
+                  ].map(tab => {
+                    const Icon = tab.icon;
+                    const isActive = activeTab === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        onClick={() => setActiveTab(tab.id as any)}
+                        className={`w-full text-left px-3.5 py-2.5 rounded-lg text-xs font-semibold flex items-center justify-between transition-all ${
+                          isActive 
+                            ? 'bg-blue-600 text-white font-extrabold shadow-sm shadow-blue-600/10' 
+                            : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2.5">
+                          <Icon size={14} /> {tab.label}
+                        </span>
+                        
+                        {/* Indicators badge count */}
+                        {tab.id === 'cities' && cities.length > 0 && (
+                          <span className={`${isActive ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-400'} text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold`}>
+                            {cities.length}
+                          </span>
+                        )}
+                        {tab.id === 'fleet' && buses.length > 0 && (
+                          <span className={`${isActive ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-400'} text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold`}>
+                            {buses.length}
+                          </span>
+                        )}
+                        {tab.id === 'lines' && lines.length > 0 && (
+                          <span className={`${isActive ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-400'} text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold`}>
+                            {lines.length}
+                          </span>
+                        )}
+                        {tab.id === 'simulator' && activeVoyages.length > 0 && (
+                          <span className="bg-emerald-500 text-white animate-pulse text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold">
+                            {activeVoyages.length}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Footer account status */}
+                <div className="p-3 bg-slate-900 border-t border-slate-800 flex items-center justify-between">
+                  <div className="truncate pr-2">
+                    <span className="text-[10px] text-slate-500 font-bold uppercase block tracking-wider">Operador Logado</span>
+                    <span className="text-xs text-slate-300 font-mono truncate block">{user.email}</span>
+                  </div>
+                  <button 
+                    onClick={handleSignOut}
+                    className="p-1.5 bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded-md transition-colors"
+                    title="Excluir sessão"
+                  >
+                    <LogOut size={13} />
+                  </button>
+                </div>
+
+              </div>
+
+              {/* Central Tab Content Layout */}
+              <div className="flex-1 bg-slate-900 p-6 overflow-y-auto space-y-6">
+                
+                {/* 1. DASHBOARD PAGE */}
+                {activeTab === 'dashboard' && (
+                  <div className="space-y-6 animate-fade-in">
+                    
+                    {/* Metrics Panel */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                      
+                      <div className="bg-slate-800 border border-slate-800 p-4 rounded-xl flex items-center gap-3 shadow-xs">
+                        <div className="p-3 bg-blue-600/10 text-blue-400 rounded-lg">
+                          <DollarSign size={20} />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Faturamento Sim.</span>
+                          <span className="text-sm font-extrabold text-white font-mono">
+                            R$ {totalRevenue.toLocaleString('pt-BR')}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-800 border border-slate-800 p-4 rounded-xl flex items-center gap-3 shadow-xs">
+                        <div className="p-3 bg-purple-600/10 text-purple-400 rounded-lg">
+                          <Users size={20} />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Total Passageiros</span>
+                          <span className="text-sm font-extrabold text-white font-mono">
+                            {totalPassengers.toLocaleString('pt-BR')} pax
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-800 border border-slate-800 p-4 rounded-xl flex items-center gap-3 shadow-xs">
+                        <div className="p-3 bg-emerald-600/10 text-emerald-400 rounded-lg">
+                          <TrendingUp size={20} />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider font-sans">Ocupação Média</span>
+                          <span className="text-sm font-extrabold text-white font-mono">
+                            {avgOccupancy}%
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="bg-slate-800 border border-slate-800 p-4 rounded-xl flex items-center gap-3 shadow-xs">
+                        <div className="p-3 bg-slate-600/10 text-slate-300 rounded-lg">
+                          <BusIcon size={20} />
+                        </div>
+                        <div>
+                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Frota Cadastro</span>
+                          <span className="text-sm font-extrabold text-white font-mono">
+                            {buses.length} ônibus
+                          </span>
+                        </div>
+                      </div>
+
+                    </div>
+
+                    {/* Chart panel row */}
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      
+                      {/* Left side: Revenue chart */}
+                      <div className="lg:col-span-8 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
+                        <div className="flex justify-between items-center pb-2 border-b border-slate-700/60">
+                          <div className="space-y-0.5">
+                            <h4 className="text-xs font-black text-white uppercase tracking-wider">Faturamento Operacional e Fluxo</h4>
+                            <span className="text-[10px] text-slate-400 block font-sans">Histórico acumulado de faturamento por viagens concluídas</span>
+                          </div>
+                        </div>
+
+                        {completedTrips.length === 0 ? (
+                          <div className="py-24 text-center text-xs text-slate-500 bg-slate-900/40 border border-slate-800/80 border-dashed rounded-xl flex flex-col justify-center items-center gap-2">
+                            <TrendingUp size={24} className="text-slate-600" />
+                            <span>Sem histórico financeiro recente. Inicie e conclua viagens simuladas na aba "Simulador" para preencher este painel.</span>
+                          </div>
+                        ) : (
+                          <div className="h-64">
+                            <ResponsiveContainer width="100%" height="100%">
+                              <LineChart data={getRevenueChartData()}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                                <XAxis dataKey="data" stroke="#94a3b8" fontSize={11} className="font-mono" />
+                                <YAxis stroke="#94a3b8" fontSize={11} />
+                                <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }} labelStyle={{ color: '#fff' }} />
+                                <Legend />
+                                <RechartsLine type="monotone" dataKey="Faturamento" name="Faturamento (R$)" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                                <RechartsLine type="monotone" dataKey="Passageiros" name="Paxs Transportados" stroke="#8b5cf6" strokeWidth={2} />
+                              </LineChart>
+                            </ResponsiveContainer>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Right side: Fleet distribution */}
+                      <div className="lg:col-span-4 bg-slate-800 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between">
+                        <div className="space-y-0.5 pb-2 border-b border-slate-700/60">
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Comportamento da Frota</h4>
+                          <span className="text-[10px] text-slate-400 block">Classificação de carros cadastrados</span>
+                        </div>
+
+                        {buses.length === 0 ? (
+                          <div className="py-12 text-center text-xs text-slate-500 flex flex-col justify-center gap-1.5 self-center">
+                            <BusIcon size={24} className="text-slate-700 mx-auto" />
+                            <span>Sem ônibus cadastrados na frota.</span>
+                          </div>
+                        ) : (
+                          <div className="flex-1 flex flex-col justify-center py-4">
+                            <div className="h-44">
+                              <ResponsiveContainer width="100%" height="100%">
+                                <PieChart>
+                                  <Pie data={getServiceDistributionData()} cx="50%" cy="50%" innerRadius={42} outerRadius={65} paddingAngle={4} dataKey="value">
+                                    {getServiceDistributionData().map((entry, index) => (
+                                      <Cell key={`cell-${index}`} fill={entry.color} />
+                                    ))}
+                                  </Pie>
+                                  <Tooltip />
+                                </PieChart>
+                              </ResponsiveContainer>
+                            </div>
+                            <div className="flex flex-col gap-1 text-[11px] font-sans">
+                              {getServiceDistributionData().map((entry, idx) => (
+                                <div key={idx} className="flex justify-between items-center text-slate-300">
+                                  <span className="flex items-center gap-1.5">
+                                    <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: entry.color }}></span>
+                                    {entry.name}
+                                  </span>
+                                  <span className="font-mono font-bold text-white">{entry.value} ud.</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+
+                    {/* Operational indicators list (Feasibilities alerts) */}
+                    <div className="bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
+                      <div>
+                        <h4 className="text-xs font-black text-white uppercase tracking-wider">Diagnóstico Operacional de Viabilidade</h4>
+                        <span className="text-[10px] text-slate-440 block">Alertas preventivos e checagem de horários sobrepostos</span>
+                      </div>
+
+                      {schedules.length === 0 ? (
+                        <div className="p-4 bg-slate-900/40 rounded-xl text-center text-[11px] text-slate-500">
+                          Nenhum horário registrado operacionalmente para análise.
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 text-xs font-sans">
+                          {schedules.map(sch => {
+                            const line = lines.find(l => l.id === sch.lineId);
+                            if (!line) return null;
+                            const check = checkScheduleFeasibility(sch, line, schedules, lines, buses);
+                            const origin = cities.find(c => c.id === line.originCityId);
+                            const dest = cities.find(c => c.id === line.destinationCityId);
+
+                            return (
+                              <div 
+                                key={sch.id}
+                                className={`p-3.5 rounded-xl border flex items-start gap-3 transition-colors ${
+                                  check.level === 'warning'
+                                    ? 'bg-red-500/10 border-red-500/20 text-red-300'
+                                    : check.level === 'info'
+                                    ? 'bg-amber-500/10 border-amber-500/20 text-amber-300'
+                                    : 'bg-green-500/10 border-green-500/20 text-green-300'
+                                }`}
+                              >
+                                {check.level === 'warning' && <AlertTriangle size={16} className="text-red-400 mt-0.5 flex-shrink-0" />}
+                                {check.level === 'info' && <AlertTriangle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />}
+                                {check.level === 'success' && <Check size={16} className="text-green-400 mt-0.5 flex-shrink-0" />}
+
+                                <div className="space-y-1 leading-normal">
+                                  <div className="font-extrabold text-[#fff]">
+                                    {origin?.name} ➔ {dest?.name} ({sch.departureTime})
+                                  </div>
+                                  <p className="text-[11px] opacity-85">{check.message}</p>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                  </div>
+                )}
+
+                {/* 2. CITIES PAGE */}
+                {activeTab === 'cities' && (
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      
+                      {/* Left: city register form */}
+                      <div className="lg:col-span-4 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
+                        <div className="space-y-0.5 border-b border-slate-700/60 pb-3">
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Cadastrar Cidade</h4>
+                          <span className="text-[10px] text-slate-400">Insira as localidades atendidas em suas linhas</span>
+                        </div>
+
+                        {cityError && (
+                          <div className="p-2.5 bg-red-500/15 border border-red-500/25 text-red-300 rounded text-xs">
+                            {cityError}
+                          </div>
+                        )}
+
+                        <form onSubmit={handleCreateCity} className="space-y-4 font-sans">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Nome do Município</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Ex: Ribeirão Preto"
+                              value={cityName}
+                              onChange={(e) => setCityName(e.target.value)}
+                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Estado (UF)</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Ex: SP"
+                              maxLength={2}
+                              value={cityState}
+                              onChange={(e) => setCityState(e.target.value)}
+                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Sigla IATA (3 Letras)</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Ex: RAO"
+                              maxLength={3}
+                              value={cityCode}
+                              onChange={(e) => setCityCode(e.target.value)}
+                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500 font-mono font-bold uppercase"
+                            />
+                          </div>
+
+                          <button
+                            type="submit"
+                            className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-extrabold transition-all cursor-pointer"
+                          >
+                            Adicionar Localidade
+                          </button>
+                        </form>
+                      </div>
+
+                      {/* Right: cities grid table */}
+                      <div className="lg:col-span-8 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
+                        <div>
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Localidades de Operação</h4>
+                          <span className="text-[10px] text-slate-400 block pb-1">Gerenciador de terminais rodoviários e hubs regionais</span>
+                        </div>
+
+                        {cities.length === 0 ? (
+                          <div className="py-24 text-center text-slate-500 border border-slate-800/80 border-dashed rounded-xl text-xs space-y-2">
+                            <MapPin size={24} className="text-slate-700 mx-auto" />
+                            <span>Nenhuma localidade registrada. Adicione cidades no painel ao lado.</span>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                            {cities.map(ct => {
+                              // count connected routes
+                              const linesCount = lines.filter(l => l.originCityId === ct.id || l.destinationCityId === ct.id).length;
+                              return (
+                                <div
+                                  key={ct.id}
+                                  className="p-3 bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl flex justify-between items-center shadow-xs"
+                                >
+                                  <div>
+                                    <span className="inline-block px-1.5 py-0.5 bg-slate-800 border border-slate-700 font-mono font-bold text-[9.5px] text-slate-300 rounded mb-1">
+                                      {ct.code} - {ct.state}
+                                    </span>
+                                    <h5 className="text-xs font-extrabold text-white">{ct.name}</h5>
+                                    <span className="text-[9px] text-slate-500 font-medium font-sans">
+                                      {linesCount === 0 ? 'Sem conexões' : `${linesCount} rota(s) intermunicipais`}
+                                    </span>
+                                  </div>
+                                  <button
+                                    onClick={() => handleDeleteCity(ct.id)}
+                                    className="text-slate-500 hover:text-red-400 p-1.5 rounded hover:bg-red-500/10 transition-colors"
+                                    title="Remover cidade"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+                {/* 3. FLEET PAGE */}
+                {activeTab === 'fleet' && (
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      
+                      {/* Left side: register bus Form */}
+                      <div className="lg:col-span-4 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4 text-xs font-sans">
+                        <div className="space-y-0.5 border-b border-slate-705 pb-3">
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Adicionar Carro</h4>
+                          <span className="text-[10px] text-slate-400">Gerencie novos ônibus na garagem operacional</span>
+                        </div>
+
+                        {busError && (
+                          <div className="p-2.5 bg-red-500/15 border border-red-500/25 text-red-300 rounded text-xs font-semibold">
+                            ⚠️ {busError}
+                          </div>
+                        )}
+
+                        <form onSubmit={handleCreateBus} className="space-y-4 font-sans">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Identificador / Placa (Mercosul)</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Ex: ABC-1D23"
+                              maxLength={8}
+                              value={busPlate}
+                              onChange={(e) => setBusPlate(e.target.value)}
+                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500 font-mono font-bold"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Chassi / Modelo de Carroceria</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Marcopolo Paradiso 1200 G8"
+                              value={busModel}
+                              onChange={(e) => setBusModel(e.target.value)}
+                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Serviço & Cabine</label>
+                            <select
+                              value={busServiceType}
+                              onChange={(e) => setBusServiceType(e.target.value as any)}
+                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none text-white focus:border-blue-500"
+                            >
+                              <option value="convencional">🚌 Convencional (46 assentos)</option>
+                              <option value="executivo">🌟 Executivo (38 assentos)</option>
+                              <option value="leito">💤 Leito de Luxo (28 assentos)</option>
+                            </select>
+                          </div>
+
+                          <div className="p-3 bg-slate-900/50 rounded-lg border border-slate-700 text-[10.5px] leading-normal text-slate-400 font-medium">
+                            📌 O limite de assentos é auto-ajustado conforme o tipo de cabine para assegurar o conforto regulado pela ANTT.
+                          </div>
+
+                          <button
+                            type="submit"
+                            className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-extrabold transition-all cursor-pointer shadow-sm"
+                          >
+                            Cadastrar Carro
+                          </button>
+                        </form>
+                      </div>
+
+                      {/* Right side: Buses Grid list */}
+                      <div className="lg:col-span-8 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
+                        <div>
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Frota de Veículos</h4>
+                          <span className="text-[10px] text-slate-400 block">Garagem operacional de carros em serviço ativo</span>
+                        </div>
+
+                        {buses.length === 0 ? (
+                          <div className="py-24 text-center text-slate-400 border border-slate-800/80 border-dashed rounded-xl text-xs space-y-2">
+                            <BusIcon size={24} className="text-slate-700 mx-auto" />
+                            <span>Nenhum veículo ativo na frota.</span>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {buses.map(b => (
+                              <div
+                                key={b.id}
+                                className="p-4 bg-slate-900 border border-slate-800 rounded-xl relative group flex flex-col justify-between"
+                              >
+                                <div className="space-y-1.5">
+                                  <div className="flex justify-between items-start">
+                                    <span className="px-2 py-0.5 bg-slate-800 border border-slate-700 text-slate-200 font-mono font-bold text-xs rounded">
+                                      🚏 {b.plate}
+                                    </span>
+
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`text-[9px] font-black tracking-widest uppercase p-1 rounded font-mono ${
+                                        b.status === 'disponivel'
+                                          ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+                                          : b.status === 'em_viagem'
+                                          ? 'bg-blue-500/15 text-blue-400 border border-blue-500/10'
+                                          : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                      }`}>
+                                        {b.status === 'disponivel' ? 'Disponível' : b.status === 'em_viagem' ? 'Na Estrada' : 'Manutenção'}
+                                      </span>
+                                      
+                                      <button
+                                        onClick={() => handleDeleteBus(b.id)}
+                                        className="text-slate-500 hover:text-red-400 p-0.5 rounded transition-colors cursor-pointer"
+                                        title="Remover carro"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <h5 className="text-xs font-extrabold text-white font-sans">{b.model}</h5>
+                                </div>
+
+                                <div className="flex justify-between items-center text-[11px] pt-3 mt-3 border-t border-slate-800/80 font-sans">
+                                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                    b.serviceType === 'leito'
+                                      ? 'bg-purple-500/15 text-purple-300'
+                                      : b.serviceType === 'executivo'
+                                      ? 'bg-blue-500/15 text-blue-300'
+                                      : 'bg-slate-800 text-slate-400'
+                                  }`}>
+                                    {b.serviceType === 'leito' ? '💤 Leito' : b.serviceType === 'executivo' ? '🌟 Executivo' : '🚌 Convencional'}
+                                  </span>
+
+                                  <span className="text-slate-400 font-bold font-mono">
+                                    {b.capacity} Assentos
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+                {/* 4. LINES PAGE (ROTAS) */}
+                {activeTab === 'lines' && (
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      
+                      {/* Left: create Line route form */}
+                      <div className="lg:col-span-4 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
+                        <div className="space-y-0.5 border-b border-slate-700/60 pb-3">
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Estruturar Rota</h4>
+                          <span className="text-[10px] text-slate-400 block font-sans">Desenhe uma linha conectando hubs rodoviários</span>
+                        </div>
+
+                        {lineError && (
+                          <div className="p-2.5 bg-red-500/15 border border-red-500/25 text-red-300 rounded text-xs font-semibold">
+                            ⚠️ {lineError}
+                          </div>
+                        )}
+
+                        <form onSubmit={handleCreateLine} className="space-y-4 text-xs font-sans">
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Cidade de Origem</label>
+                            <select
+                              value={lineOriginCityId}
+                              onChange={(e) => setLineOriginCityId(e.target.value)}
+                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                            >
+                              <option value="">-- Selecione a Origem --</option>
+                              {cities.map(ct => (
+                                <option key={ct.id} value={ct.id}>{ct.name} ({ct.code})</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block tracking-wider uppercase">Cidade de Destino</label>
+                            <select
+                              value={lineDestinationCityId}
+                              onChange={(e) => setLineDestinationCityId(e.target.value)}
+                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                            >
+                              <option value="">-- Selecione o Destino --</option>
+                              {cities.map(ct => (
+                                <option key={ct.id} value={ct.id}>{ct.name} ({ct.code})</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <label className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">Distância (Km)</label>
+                              <input
+                                type="number"
+                                required
+                                value={lineDistance}
+                                onChange={(e) => setLineDistance(Number(e.target.value))}
+                                className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded text-xs text-center font-bold"
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <label className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider font-sans">Duração (Minutos)</label>
+                              <input
+                                type="number"
+                                required
+                                value={lineDuration}
+                                onChange={(e) => setLineDuration(Number(e.target.value))}
+                                className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded text-xs text-center font-bold"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Categoria de Linha Padrão</label>
+                            <select
+                              value={lineServiceType}
+                              onChange={(e) => setLineServiceType(e.target.value as any)}
+                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                            >
+                              <option value="convencional">Bus Convencional</option>
+                              <option value="executivo">Bus Executivo</option>
+                              <option value="leito">Bus Leito Especial</option>
+                            </select>
+                          </div>
+
+                          <button
+                            type="submit"
+                            className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-extrabold transition-all cursor-pointer"
+                          >
+                            Adicionar Nova Rota
+                          </button>
+                        </form>
+                      </div>
+
+                      {/* Right: Grid of existing routes lines */}
+                      <div className="lg:col-span-8 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
+                        <div>
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Rotas do Portfólio</h4>
+                          <span className="text-[10px] text-slate-400 block pb-1">Conexões vigentes de tráfego interestadual e intermunicipal</span>
+                        </div>
+
+                        {lines.length === 0 ? (
+                          <div className="py-24 text-center text-slate-400 border border-slate-800/80 border-dashed rounded-xl text-xs space-y-2">
+                            <GitCommit size={24} className="text-slate-700 mx-auto" />
+                            <span>Nenhuma rota interestadual cadastrada.</span>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {lines.map(l => {
+                              const origin = cities.find(c => c.id === l.originCityId);
+                              const dest = cities.find(c => c.id === l.destinationCityId);
+                              const connectedSchedules = schedules.filter(s => s.lineId === l.id).length;
+
+                              // formatting duration hours
+                              const h = Math.floor(l.duration / 60);
+                              const m = l.duration % 60;
+                              const dLabel = h > 0 ? `${h}h e ${m}m` : `${m}min`;
+
+                              return (
+                                <div
+                                  key={l.id}
+                                  className="p-4 bg-slate-900 border border-slate-800 hover:border-slate-750 rounded-xl relative flex flex-col justify-between"
+                                >
+                                  <div className="space-y-1.5 flex-1">
+                                    <div className="flex justify-between items-start">
+                                      <span className="text-[9.5px] font-black uppercase text-slate-400 tracking-wider">
+                                        Distância: {l.distance} Km
+                                      </span>
+
+                                      <button
+                                        onClick={() => handleDeleteLine(l.id)}
+                                        className="text-slate-500 hover:text-red-400 p-0.5 rounded transition-colors"
+                                        title="Remover linha"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+
+                                    <h4 className="text-xs font-extrabold text-white leading-normal font-sans pr-6">
+                                      {origin ? origin.name : 'Localidade Desconhecida'} ➔ {dest ? dest.name : 'Localidade Desconhecida'}
+                                    </h4>
+
+                                    <div className="flex items-center gap-2 pt-2 text-[10.5px] font-mono text-slate-400">
+                                      <span className="flex items-center gap-0.5">
+                                        <Clock size={11} /> {dLabel}
+                                      </span>
+                                      <span>•</span>
+                                      <span className="text-blue-400 font-semibold font-sans uppercase">
+                                        {l.serviceType}
+                                      </span>
+                                    </div>
+                                  </div>
+
+                                  <div className="pt-3 mt-3 border-t border-slate-800 flex justify-between items-center text-[10.5px] font-sans text-slate-500">
+                                    <span>Cadastrada por {activeCompany.code}</span>
+                                    <span className="font-semibold font-mono text-slate-350">{connectedSchedules} partidas programadas</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+                {/* 5. OPERATIONAL SCHEDULE PAGE */}
+                {activeTab === 'schedules' && (
+                  <div className="space-y-6 animate-fade-in">
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      
+                      {/* Left: Schedule setup parameters and forms */}
+                      <div className="lg:col-span-4 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
+                        <div className="space-y-0.5 border-b border-slate-700/60 pb-3">
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider font-sans">Agendar Saída</h4>
+                          <span className="text-[10px] text-slate-400 block font-sans">Estabeleça uma grade operacional dinâmica</span>
+                        </div>
+
+                        {schedError && (
+                          <div className="p-2.5 bg-red-500/15 border border-red-500/25 text-red-300 rounded text-xs font-semibold">
+                            ⚠️ {schedError}
+                          </div>
+                        )}
+
+                        <form onSubmit={handleCreateSchedule} className="space-y-4 text-xs font-sans">
+                          
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Rota / Conexão</label>
+                            <select
+                              value={schedLineId}
+                              onChange={(e) => setSchedLineId(e.target.value)}
+                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                            >
+                              <option value="">-- Selecione uma Rota --</option>
+                              {lines.map(l => {
+                                const orig = cities.find(c => c.id === l.originCityId);
+                                const dest = cities.find(c => c.id === l.destinationCityId);
+                                return (
+                                  <option key={l.id} value={l.id}>
+                                    {orig?.name} ➔ {dest?.name} ({l.serviceType})
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Horário de Saída</label>
+                            <input
+                              type="text"
+                              required
+                              placeholder="Ex: 14:15"
+                              maxLength={5}
+                              value={schedDepartureTime}
+                              onChange={(e) => setSchedDepartureTime(e.target.value)}
+                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500 font-mono font-bold text-center"
+                            />
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Frequência Semanal</label>
+                            <select
+                              value={schedFrequency}
+                              onChange={(e) => setSchedFrequency(e.target.value as any)}
+                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                            >
+                              <option value="diaria">Saídas Diárias</option>
+                              <option value="seg-sex">Segunda a Sexta-Feira</option>
+                              <option value="fds">Sábados e Domingos</option>
+                              <option value="semanal">Uma Vez Por Semana (Fretamento/Reforço)</option>
+                            </select>
+                          </div>
+
+                          <div className="space-y-1">
+                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Serviço Escalonado</label>
+                            <select
+                              value={schedServiceType}
+                              onChange={(e) => setSchedServiceType(e.target.value as any)}
+                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                            >
+                              <option value="convencional">🚌 Convencional</option>
+                              <option value="executivo">🌟 Executivo</option>
+                              <option value="leito">💤 Leito Especial</option>
+                            </select>
+                          </div>
+
+                          {/* Live Dynamic Projections inside parameters */}
+                          {(() => {
+                            if (!schedLineId || !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(schedDepartureTime)) return null;
+                            const prj = getScheduleDemandEstimation(schedLineId, schedDepartureTime, schedFrequency, undefined, schedServiceType, lines);
+                            if (!prj) return null;
+
+                            return (
+                              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-[11px] space-y-1">
+                                <span className="font-extrabold text-blue-400 block uppercase tracking-wider text-[9.5px]">📊 Projeção Operacional Corrente:</span>
+                                <div className="flex justify-between">
+                                  <span className="text-slate-400">Ocupação Média Projeta:</span>
+                                  <span className="font-bold text-white font-mono">{prj.occupancyRate}%</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-slate-400 font-sans">Passageiros Estimados:</span>
+                                  <span className="font-bold text-white font-mono">{prj.pMin} a {prj.pMax} paxs</span>
+                                </div>
+                                <div className="text-[9.5px] text-slate-350 italic leading-tight pt-1 border-t border-slate-700/60 font-sans">{prj.timeLabel} • {prj.explanation}</div>
+                              </div>
+                            );
+                          })()}
+
+                          <button
+                            type="submit"
+                            className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-extrabold transition-all cursor-pointer shadow-sm"
+                          >
+                            Confirmar Programação
+                          </button>
+                        </form>
+                      </div>
+
+                      {/* Right: Grid of active programmed schedules */}
+                      <div className="lg:col-span-8 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
+                        <div>
+                          <h4 className="text-xs font-black text-white uppercase tracking-wider font-sans">Quadro Horário Comercial</h4>
+                          <span className="text-[10px] text-slate-400 block font-sans">Escalas de partidas programadas por linha</span>
+                        </div>
+
+                        {schedules.length === 0 ? (
+                          <div className="py-24 text-center text-slate-400 border border-slate-800/80 border-dashed rounded-xl text-xs space-y-2">
+                            <CalendarClock size={24} className="text-slate-700 mx-auto" />
+                            <span>Nenhum horário cadastrado. Inicie um agendamento novo no formulário ao lado.</span>
+                          </div>
+                        ) : (
+                          <div className="space-y-4.5">
+                            {lines.map(line => {
+                              const lineSchedule = schedules.filter(s => s.lineId === line.id);
+                              if (lineSchedule.length === 0) return null;
+
+                              const orig = cities.find(c => c.id === line.originCityId);
+                              const dest = cities.find(c => c.id === line.destinationCityId);
+
+                              return (
+                                <div key={line.id} className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
+                                  <h4 className="text-xs font-black text-white uppercase tracking-wider font-sans pb-1.5 border-b border-slate-800/80">
+                                    Conexão: {orig?.name} ➔ {dest?.name}
+                                  </h4>
+
+                                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                    {lineSchedule.map(sch => {
+                                      const est = getScheduleDemandEstimation(sch.lineId, sch.departureTime, sch.frequency, sch.id, sch.serviceType, lines);
+                                      const feasibility = checkScheduleFeasibility(sch, line, schedules, lines, buses);
+
+                                      return (
+                                        <div
+                                          key={sch.id}
+                                          className="p-3 bg-slate-850 border border-slate-800 rounded-lg flex flex-col justify-between hover:border-slate-700 transition-colors"
+                                        >
+                                          <div className="flex justify-between items-start mb-1 h-8">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                              <span className="font-mono font-bold text-xs bg-blue-600/10 text-blue-400 border border-blue-500/10 px-2 py-0.5 rounded">
+                                                ⏱️ {sch.departureTime}
+                                              </span>
+                                              <span className="text-[9px] uppercase font-bold text-slate-400 font-mono bg-slate-800 px-1 py-0.5 rounded">
+                                                {sch.frequency === 'diaria' ? 'Dia-a-Dia' : sch.frequency}
+                                              </span>
+                                              <span className="text-[9.5px] uppercase font-black text-blue-450 font-sans">
+                                                {sch.serviceType}
+                                              </span>
+                                            </div>
+
+                                            <button
+                                              onClick={() => handleDeleteSchedule(sch.id)}
+                                              className="text-slate-500 hover:text-red-400 p-0.5 rounded transition-colors"
+                                              title="Excluir horário"
+                                            >
+                                              <Trash2 size={13} />
+                                            </button>
+                                          </div>
+
+                                          {/* Demand micro-projection */}
+                                          {est && (
+                                            <div className="bg-slate-900/60 p-2 rounded text-[10px] leading-normal text-slate-400 space-y-1 mb-2">
+                                              <div className="flex justify-between font-medium">
+                                                <span>Fluxo Esperado:</span>
+                                                <span className="text-white font-mono font-bold">{est.pMin}–{est.pMax} paxs</span>
+                                              </div>
+                                              <div className="flex justify-between font-medium">
+                                                <span>Ocupação Previsível:</span>
+                                                <span className="text-indigo-400 font-mono font-bold">{est.occupancyRate}%</span>
+                                              </div>
+                                            </div>
+                                          )}
+
+                                          {/* Feasibility Alert */}
+                                          <div className={`p-1.5 rounded text-[9.5px] leading-tight font-medium flex gap-1 ${
+                                            feasibility.level === 'warning'
+                                              ? 'bg-red-500/10 text-red-400'
+                                              : feasibility.level === 'info'
+                                              ? 'bg-amber-500/10 text-amber-400'
+                                              : 'bg-green-500/10 text-green-400'
+                                          }`}>
+                                            <Info size={11} className="flex-shrink-0" />
+                                            <span className="line-clamp-2">{feasibility.message}</span>
+                                          </div>
+
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+                {/* 6. TRAFFIC SIMULATOR PANEL */}
+                {activeTab === 'simulator' && (
+                  <div className="space-y-6 animate-fade-in text-sans">
+                    <div className="bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
+                      <div className="border-b border-slate-700/60 pb-3">
+                        <h4 className="text-xs font-black text-white uppercase tracking-wider font-sans">Simulação de Partidas e Despachos</h4>
+                        <span className="text-[10px] text-slate-400 block font-sans">Mecanismo dinâmico de tráfego terrestre rodoviário das linhas ativas</span>
+                      </div>
+
+                      <div className="p-3 bg-gradient-to-r from-blue-900/40 to-slate-800 rounded-xl border border-blue-500/20 text-xs text-slate-300 leading-relaxed font-sans space-y-1 mb-4">
+                        <span className="font-extrabold text-blue-400 flex items-center gap-1">
+                          <Sparkles size={13} className="text-yellow-300" /> Painel de Controle de Simulação Coletora
+                        </span>
+                        <p>
+                          Planejou seus horários? Aqui você pode colocar os carros na rodovia! Clique em <strong>"Iniciar Despacho"</strong> abaixo. O simulador selecionará automaticamente um ônibus livre de sua garagem corporativa, preencherá poltronas de passageiros conforme projeções históricas, e atualizará a progressão por satélite da viagem em tempo real. Ao concluir a viagem, o faturamento das passagens alimentará seu Dashboard principal!
+                        </p>
+                      </div>
+
+                      {/* Active Voyages Section */}
+                      <div className="space-y-3.5">
+                        <span className="text-[10px] text-slate-400 font-extrabold block uppercase tracking-wider">Viagens Rodoviárias Ativas</span>
+                        
+                        {activeVoyages.length === 0 ? (
+                          <div className="p-8 bg-slate-900/60 border border-slate-800 border-dashed rounded-xl text-center text-xs text-slate-500">
+                            Não há nenhuma viagem ocorrendo na estrada neste momento. Inicie um despacho na grade abaixo.
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {activeVoyages.map(v => {
+                              const line = lines.find(l => l.id === v.lineId);
+                              const orig = cities.find(c => c.id === line?.originCityId);
+                              const dest = cities.find(c => c.id === line?.destinationCityId);
+                              const bus = buses.find(b => b.id === v.busId);
+
+                              return (
+                                <div key={v.id} className="p-4 bg-slate-900 border border-slate-750 rounded-xl space-y-3 animate-fade-in font-sans">
+                                  <div className="flex justify-between items-center text-[10.5px]">
+                                    <span className="font-mono text-blue-450 font-extrabold uppercase">
+                                      {bus?.plate || 'Bus'} - {bus?.model.split(' ')[0]}
+                                    </span>
+                                    <span className="font-mono font-bold text-white bg-blue-600/20 border border-blue-500/10 p-0.5 px-2 rounded-md">
+                                      Poltronas: {v.passengerCount} / {bus?.capacity} ocupadas
+                                    </span>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <h5 className="text-xs font-black text-white leading-normal pr-4">
+                                      {orig?.name} ➔ {dest?.name}
+                                    </h5>
+                                    
+                                    {/* Progression bar */}
+                                    <div className="space-y-1 pt-1.5">
+                                      <div className="flex justify-between text-[10px] text-slate-550 font-bold font-mono">
+                                        <span>Status: {v.progress === 100 ? '🎉 Viagem Finalizada' : '🚌 Em Trânsito'}</span>
+                                        <span>Progresso: {v.progress}%</span>
+                                      </div>
+                                      <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden border border-slate-700/60">
+                                        <div 
+                                          className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-1000" 
+                                          style={{ width: `${v.progress}%` }}
+                                        ></div>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="flex justify-between items-center pt-2.5 border-t border-slate-800">
+                                    <div className="text-[10px] text-slate-480 leading-normal font-sans text-slate-400">
+                                      Saturamento Estimado: <strong className="text-emerald-400 font-mono">R$ {(v.passengerCount * v.ticketPrice).toLocaleString('pt-BR')}</strong>
+                                    </div>
+
+                                    <button
+                                      onClick={() => handleCompleteVoyage(v.id)}
+                                      disabled={v.progress < 100}
+                                      className={`px-3 py-1.5 rounded-lg text-[10.5px] font-extrabold cursor-pointer transition-colors ${
+                                        v.progress === 100 
+                                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/10' 
+                                          : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                                      }`}
+                                      title={v.progress < 100 ? 'Aguarde o progresso do ônibus completar 100%' : 'Concluir viagem'}
+                                    >
+                                      Concluir Viagem & Faturar
+                                    </button>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Ready dispatch options list */}
+                      <div className="space-y-3 pt-3">
+                        <span className="text-[10px] text-slate-400 font-extrabold block uppercase tracking-wider">Grid Operacional Disponível para Despacho</span>
+                        
+                        {schedules.length === 0 ? (
+                          <div className="p-4 bg-slate-900/40 rounded-xl text-center text-xs text-slate-550 italic">
+                            Nenhum horário cadastrado. Planeje horários na aba "Agenda e Saídas" antes de despachar carros.
+                          </div>
+                        ) : (
+                          <div className="bg-slate-900 rounded-xl divide-y divide-slate-800 overflow-hidden font-sans">
+                            {schedules.map(sch => {
+                              const line = lines.find(l => l.id === sch.lineId);
+                              const orig = cities.find(c => c.id === line?.originCityId);
+                              const dest = cities.find(c => c.id === line?.destinationCityId);
+                              const activeOnThis = activeVoyages.filter(v => v.scheduleId === sch.id).length;
+
+                              return (
+                                <div key={sch.id} className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 hover:bg-slate-850/50 transition-colors">
+                                  <div>
+                                    <div className="flex items-center gap-2 mb-1">
+                                      <span className="font-mono text-xs text-blue-400 font-extrabold bg-blue-500/10 border border-blue-500/10 py-0.5 px-2 rounded-md">
+                                        ⏱️ {sch.departureTime}
+                                      </span>
+                                      <span className="text-[10px] uppercase font-bold text-slate-400 bg-slate-850 py-0.5 px-2 rounded">
+                                        {sch.frequency}
+                                      </span>
+                                      <span className="text-[10.5px] uppercase font-bold text-slate-450 font-sans">
+                                        {sch.serviceType}
+                                      </span>
+                                    </div>
+                                    <h5 className="text-xs font-extrabold text-white">
+                                      {orig?.name} ➔ {dest?.name}
+                                    </h5>
+                                    <span className="text-[10px] text-slate-500 leading-normal font-sans">
+                                      Distância do trecho: {line?.distance} Km • Serviço ativo
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-2 flex-wrap self-end sm:self-center">
+                                    {activeOnThis > 0 ? (
+                                      <span className="px-3 py-1.5 bg-blue-600/10 text-blue-450 border border-blue-500/10 text-xs font-bold rounded-lg animate-pulse">
+                                        Em Estrada Ativa ({activeOnThis})
+                                      </span>
+                                    ) : (
+                                      <button
+                                        onClick={() => handleStartSimulatedVoyage(sch)}
+                                        className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-lg transition-all flex items-center gap-1"
+                                      >
+                                        <Play size={11} fill="white" /> Iniciar Viagem
+                                      </button>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+
+              </div>
+
+            </div>
+          )}
+
+        </div>
+      )}
+
     </div>
   );
 }
-

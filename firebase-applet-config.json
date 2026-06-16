@@ -3,6 +3,7 @@
   "appId": "1:109520988324:web:d79d9a4170f1f3ddff1e31",
   "apiKey": "AIzaSyB6l2SR8si7B5JMMkzqxH94ZsBPYHt2hdc",
   "authDomain": "striking-keep-6n56p.firebaseapp.com",
+  "firestoreDatabaseId": "ai-studio-601b9595-4c66-49d7-b458-392d78d24dda",
   "storageBucket": "striking-keep-6n56p.firebasestorage.app",
   "messagingSenderId": "109520988324",
   "measurementId": ""
