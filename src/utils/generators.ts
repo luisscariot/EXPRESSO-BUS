@@ -7,21 +7,21 @@ export function generateDemoData(companyId: string): {
   schedules: Schedule[];
   completedTrips: CompletedTrip[];
 } {
-  // 1. Generate standard cities
+  // 1. Generate standard cities with vocations and distances
   const cities: City[] = [
-    { id: `city-1-${companyId}`, name: 'São Paulo', state: 'SP', code: 'SPO', companyId },
-    { id: `city-2-${companyId}`, name: 'Rio de Janeiro', state: 'RJ', code: 'RIO', companyId },
-    { id: `city-3-${companyId}`, name: 'Belo Horizonte', state: 'MG', code: 'BHZ', companyId },
-    { id: `city-4-${companyId}`, name: 'Campinas', state: 'SP', code: 'CPQ', companyId },
-    { id: `city-5-${companyId}`, name: 'Curitiba', state: 'PR', code: 'CWB', companyId },
+    { id: `city-1-${companyId}`, name: 'São Paulo', state: 'SP', code: 'SPO', companyId, distanceToHub: 0, vocation: 'comercial' },
+    { id: `city-2-${companyId}`, name: 'Rio de Janeiro', state: 'RJ', code: 'RIO', companyId, distanceToHub: 435, vocation: 'turistica' },
+    { id: `city-3-${companyId}`, name: 'Belo Horizonte', state: 'MG', code: 'BHZ', companyId, distanceToHub: 586, vocation: 'industrial' },
+    { id: `city-4-${companyId}`, name: 'Campinas', state: 'SP', code: 'CPQ', companyId, distanceToHub: 98, vocation: 'universitaria' },
+    { id: `city-5-${companyId}`, name: 'Curitiba', state: 'PR', code: 'CWB', companyId, distanceToHub: 400, vocation: 'dormitorio' },
   ];
 
-  // 2. Generate standard fleet (buses)
+  // 2. Generate standard fleet (buses) with updated capacities: convencional=42, executivo=46, leito=28
   const buses: Bus[] = [
-    { id: `bus-1-${companyId}`, plate: 'ABC-1D23', model: 'Marcopolo Paradiso G8 1200', capacity: 46, serviceType: 'convencional', companyId, status: 'disponivel' },
-    { id: `bus-2-${companyId}`, plate: 'XYZ-9F87', model: 'Marcopolo Paradiso G8 1850 DD', capacity: 38, serviceType: 'executivo', companyId, status: 'disponivel' },
+    { id: `bus-1-${companyId}`, plate: 'ABC-1D23', model: 'Marcopolo Paradiso G8 1200', capacity: 42, serviceType: 'convencional', companyId, status: 'disponivel' },
+    { id: `bus-2-${companyId}`, plate: 'XYZ-9F87', model: 'Marcopolo Paradiso G8 1850 DD', capacity: 46, serviceType: 'executivo', companyId, status: 'disponivel' },
     { id: `bus-3-${companyId}`, plate: 'OPS-2W34', model: 'Irizar i8 Premium Coach', capacity: 28, serviceType: 'leito', companyId, status: 'disponivel' },
-    { id: `bus-4-${companyId}`, plate: 'COM-4X56', model: 'Comil Invictus DD', capacity: 46, serviceType: 'convencional', companyId, status: 'em_viagem' },
+    { id: `bus-4-${companyId}`, plate: 'COM-4X56', model: 'Comil Invictus DD', capacity: 42, serviceType: 'convencional', companyId, status: 'em_viagem' },
     { id: `bus-5-${companyId}`, plate: 'LTU-7Y19', model: 'Marcopolo Paradiso G8 Leito', capacity: 28, serviceType: 'leito', companyId, status: 'manutencao' },
   ];
 
@@ -86,8 +86,8 @@ export function generateDemoData(companyId: string): {
     // For each schedule, simulate a random passenger load and financial metrics
     schedules.forEach((sch, idx) => {
       // Modify based on service and index to give realistic variation
-      let cap = 46;
-      if (sch.serviceType === 'executivo') cap = 38;
+      let cap = 42;
+      if (sch.serviceType === 'executivo') cap = 46;
       if (sch.serviceType === 'leito') cap = 28;
 
       const basePax = Math.round(cap * (0.55 + Math.random() * 0.4));

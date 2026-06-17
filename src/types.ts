@@ -15,6 +15,8 @@ export interface City {
   state: string;
   code: string;
   companyId: string;
+  distanceToHub: number; // Distance in km to capital or main regional hub
+  vocation: 'industrial' | 'turistica' | 'universitaria' | 'comercial' | 'dormitorio';
 }
 
 export interface Bus {

@@ -91,6 +91,8 @@ export default function App() {
   const [cityName, setCityName] = useState('');
   const [cityState, setCityState] = useState('');
   const [cityCode, setCityCode] = useState('');
+  const [cityDistanceToHub, setCityDistanceToHub] = useState<number>(100);
+  const [cityVocation, setCityVocation] = useState<'industrial' | 'turistica' | 'universitaria' | 'comercial' | 'dormitorio'>('comercial');
   const [cityError, setCityError] = useState('');
 
   // 2. Bus Form
@@ -104,7 +106,7 @@ export default function App() {
   const [lineDestinationCityId, setLineDestinationCityId] = useState('');
   const [lineDistance, setLineDistance] = useState<number>(100);
   const [lineDuration, setLineDuration] = useState<number>(90);
-  const [lineServiceType, setLineServiceType] = useState<'convencional' | 'executivo' | 'leito'>('executivo');
+  const [lineItineraryType, setLineItineraryType] = useState<'direta' | 'paradas' | 'semi-direta'>('direta');
   const [lineError, setLineError] = useState('');
 
   // 4. Schedule Form
@@ -113,6 +115,19 @@ export default function App() {
   const [schedFrequency, setSchedFrequency] = useState<'diaria' | 'seg-sex' | 'fds' | 'semanal'>('diaria');
   const [schedServiceType, setSchedServiceType] = useState<'convencional' | 'executivo' | 'leito'>('executivo');
   const [schedError, setSchedError] = useState('');
+
+  // Interactive Line Schedules Balloon Dialog State
+  const [selectedLineForSchedules, setSelectedLineForSchedules] = useState<Line | null>(null);
+  const [editingScheduleId, setEditingScheduleId] = useState<string | null>(null);
+  const [editSchedTime, setEditSchedTime] = useState('');
+  const [editSchedFreq, setEditSchedFreq] = useState<'diaria' | 'seg-sex' | 'fds' | 'semanal'>('diaria');
+  const [editSchedService, setEditSchedService] = useState<'convencional' | 'executivo' | 'leito'>('executivo');
+
+  // Inline Quick Add state for Schedules dialog
+  const [quickSchedTime, setQuickSchedTime] = useState('');
+  const [quickSchedFreq, setQuickSchedFreq] = useState<'diaria' | 'seg-sex' | 'fds' | 'semanal'>('diaria');
+  const [quickSchedService, setQuickSchedService] = useState<'convencional' | 'executivo' | 'leito'>('executivo');
+  const [quickSchedError, setQuickSchedError] = useState('');
 
   // Live Simulated departures management
   const [activeVoyages, setActiveVoyages] = useState<{
@@ -592,6 +607,8 @@ export default function App() {
       name: cityName.trim(),
       state: cityState.trim().toUpperCase(),
       code: codeClean,
+      distanceToHub: Number(cityDistanceToHub) || 0,
+      vocation: cityVocation,
     };
 
     setCityError('');
@@ -599,6 +616,8 @@ export default function App() {
     setCityName('');
     setCityState('');
     setCityCode('');
+    setCityDistanceToHub(100);
+    setCityVocation('comercial');
   };
 
   // 2. Create Bus
@@ -648,13 +667,15 @@ export default function App() {
       return;
     }
 
-    // Check pre-existence
-    const pathExists = lines.some(l => 
-      l.originCityId === lineOriginCityId && l.destinationCityId === lineDestinationCityId && l.serviceType === lineServiceType
+    // Check pre-existence of exact same signature
+    const exactExists = lines.some(l => 
+      l.originCityId === lineOriginCityId && 
+      l.destinationCityId === lineDestinationCityId && 
+      (l as any).itineraryType === lineItineraryType
     );
 
-    if (pathExists) {
-      setLineError('Já existe esta rota cadastrada com este mesmo tipo de serviço.');
+    if (exactExists) {
+      setLineError('Já existe uma linha registrada com essa mesma rota e característica de itinerário.');
       return;
     }
 
@@ -664,7 +685,8 @@ export default function App() {
       destinationCityId: lineDestinationCityId,
       distance: Number(lineDistance),
       duration: Number(lineDuration),
-      serviceType: lineServiceType
+      serviceType: 'executivo' as const,
+      itineraryType: lineItineraryType
     };
 
     setLineError('');
@@ -701,6 +723,67 @@ export default function App() {
     setSchedError('');
     await updateResource('schedules', schedId, data, schedules, setSchedules, 'add');
     setSchedDepartureTime('');
+  };
+
+  const handleQuickCreateSchedule = async (lineId: string) => {
+    if (!quickSchedTime) {
+      setQuickSchedError('Defina o horário de partida.');
+      return;
+    }
+
+    const timeReg = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeReg.test(quickSchedTime.trim())) {
+      setQuickSchedError('Formato inválido. Use HH:MM.');
+      return;
+    }
+
+    const schedId = `sched-${Date.now()}`;
+    const data = {
+      lineId,
+      departureTime: quickSchedTime.trim(),
+      frequency: quickSchedFreq,
+      serviceType: quickSchedService,
+    };
+
+    setQuickSchedError('');
+    await updateResource('schedules', schedId, data, schedules, setSchedules, 'add');
+    setQuickSchedTime('');
+  };
+
+  const handleQuickUpdateSchedule = async (schedId: string, lineId: string) => {
+    if (!editSchedTime) {
+      alert('Defina o horário de partida.');
+      return;
+    }
+
+    const timeReg = /^([01]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeReg.test(editSchedTime.trim())) {
+      alert('Formato inválido. Use HH:MM.');
+      return;
+    }
+
+    const data = {
+      lineId,
+      departureTime: editSchedTime.trim(),
+      frequency: editSchedFreq,
+      serviceType: editSchedService,
+    };
+
+    const targetIdx = schedules.findIndex(s => s.id === schedId);
+    if (targetIdx !== -1) {
+      const updatedList = [...schedules];
+      updatedList[targetIdx] = { ...updatedList[targetIdx], ...data };
+      setSchedules(updatedList);
+      
+      if (!isLocalMode) {
+        try {
+          await setDoc(doc(db, 'schedules', schedId), { ...data, companyId: activeCompany?.id || 'default' }, { merge: true });
+        } catch (err) {
+          console.error("Firestore sync error", err);
+        }
+      }
+    }
+    setEditingScheduleId(null);
   };
 
   // REMOVE ACTIONS
@@ -753,7 +836,7 @@ export default function App() {
     }
 
     // Demand estimation calculations
-    const projection = getScheduleDemandEstimation(schedule.lineId, schedule.departureTime, schedule.frequency, schedule.id, schedule.serviceType, lines);
+    const projection = getScheduleDemandEstimation(schedule.lineId, schedule.departureTime, schedule.frequency, schedule.id, schedule.serviceType, lines, cities);
     const paxCount = projection 
       ? Math.round(projection.pMin + Math.random() * (projection.pMax - projection.pMin))
       : Math.round(delegatedBus.capacity * 0.6);
@@ -909,58 +992,58 @@ export default function App() {
 
             {/* Error notifications */}
             {authError && (
-              <div className="p-3 bg-red-500/15 border border-red-500/25 text-red-300 rounded-lg text-xs font-semibold leading-normal font-sans">
+              <div className="p-3 bg-red-100 border border-red-200 text-red-700 rounded-lg text-xs font-semibold leading-normal font-sans">
                 ⚠️ {authError}
               </div>
             )}
 
             {/* Success notification */}
             {authSuccess && (
-              <div className="p-3 bg-green-500/15 border border-green-500/25 text-green-300 rounded-lg text-xs font-semibold leading-normal font-sans">
+              <div className="p-3 bg-green-105 border border-green-200 text-green-700 rounded-lg text-xs font-semibold leading-normal font-sans">
                 ✨ {authSuccess}
               </div>
             )}
 
             {/* Form */}
             <form onSubmit={handleEmailAuthSubmit} className="space-y-4">
-              <div className="space-y-1.5 focus-within:text-blue-500">
-                <label className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">E-mail Corporativo</label>
+              <div className="space-y-1.5 focus-within:text-blue-600">
+                <label className="text-[10px] font-bold tracking-wider text-slate-500 uppercase">E-mail Corporativo</label>
                 <input 
                   type="email" 
                   required
-                  placeholder="sua.empresa@viagempro.com"
+                  placeholder="sua.empresa@expressobus.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 focus:border-blue-500 text-white rounded-lg text-xs placeholder:text-slate-500 focus:outline-none transition-colors"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-blue-500 text-slate-900 rounded-lg text-xs placeholder:text-slate-400 focus:outline-none transition-colors"
                 />
               </div>
 
-              <div className="space-y-1.5 focus-within:text-blue-500">
-                <label className="text-[10px] font-bold tracking-wider text-slate-400 uppercase">Senha</label>
+              <div className="space-y-1.5 focus-within:text-blue-600">
+                <label className="text-[10px] font-bold tracking-wider text-slate-500 uppercase">Senha</label>
                 <input 
                   type="password" 
                   required
                   placeholder="Mínimo de 6 dígitos"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-900 border border-slate-700 focus:border-blue-500 text-white rounded-lg text-xs placeholder:text-slate-500 focus:outline-none transition-colors"
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 focus:border-blue-500 text-slate-900 rounded-lg text-xs placeholder:text-slate-400 focus:outline-none transition-colors"
                 />
               </div>
 
               <button
                 type="submit"
                 disabled={authLoading}
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-blue-600/15"
+                className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 text-white rounded-lg text-xs font-bold transition-all shadow-md shadow-blue-600/15 cursor-pointer"
               >
                 {authLoading ? 'Verificando credenciais...' : isSignUp ? 'Criar Nova Conta' : 'Entrar na Plataforma'}
               </button>
             </form>
 
-            <div className="flex justify-between items-center text-[11px] text-slate-400">
+            <div className="flex justify-between items-center text-[11px] text-slate-500">
               <span>{isSignUp ? 'Já possui login?' : 'Novo por aqui?'}</span>
               <button 
                 onClick={() => setIsSignUp(!isSignUp)}
-                className="text-blue-400 hover:text-blue-300 font-extrabold focus:outline-none transition-colors"
+                className="text-blue-600 hover:text-blue-700 font-extrabold focus:outline-none transition-colors cursor-pointer"
               >
                 {isSignUp ? 'Fazer Login' : 'Criar Conta de Acesso'}
               </button>
@@ -969,10 +1052,10 @@ export default function App() {
             {/* Alternatives */}
             <div className="relative pt-2">
               <div className="absolute inset-0 flex items-center" aria-hidden="true">
-                <div className="w-full border-t border-slate-700/60"></div>
+                <div className="w-full border-t border-slate-200"></div>
               </div>
               <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-slate-800 px-2 text-[10px] text-slate-400 font-bold">Alternativas de Acesso</span>
+                <span className="bg-white px-2 text-[10px] text-slate-450 font-bold">Alternativas de Acesso</span>
               </div>
             </div>
 
@@ -981,7 +1064,7 @@ export default function App() {
                 type="button"
                 onClick={handleGoogleSignIn}
                 disabled={authLoading}
-                className="py-2 px-3 bg-slate-900/60 hover:bg-slate-900 border border-slate-700 text-slate-300 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all"
+                className="py-2 px-3 bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs"
               >
                 <svg className="w-4 h-4 flex-shrink-0" viewBox="0 0 24 24">
                   <path fill="#EA4335" d="M12 5.04c1.62 0 3.08.56 4.22 1.65l3.15-3.15C17.45 1.74 14.93 1 12 1 7.37 1 3.42 3.73 1.58 7.72l3.77 2.92C6.22 7.37 8.87 5.04 12 5.04z"/>
@@ -995,20 +1078,20 @@ export default function App() {
               <button
                 type="button"
                 onClick={handleGuestDemoMode}
-                className="py-2 px-3 bg-gradient-to-r from-blue-700/60 to-purple-700/60 hover:from-blue-700/80 hover:to-purple-700/80 border border-blue-500/30 text-white rounded-lg text-[11px] font-extrabold flex items-center justify-center gap-1.5 transition-all"
+                className="py-2 px-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 border border-indigo-100 text-white rounded-lg text-[11px] font-extrabold flex items-center justify-center gap-1.5 transition-all cursor-pointer shadow-xs"
               >
-                <Sparkles size={13} className="text-yellow-300" />
+                <Sparkles size={13} className="text-yellow-300 animate-pulse" />
                 Modo Piloto
               </button>
             </div>
 
             {/* Troubleshooting Alert */}
-            <div className="bg-slate-900/40 p-3 rounded-lg border border-slate-700/60 text-[11px] space-y-1.5">
-              <span className="font-extrabold text-blue-400 flex items-center gap-1">
+            <div className="bg-slate-50 p-3 rounded-lg border border-slate-200 text-[11px] space-y-1.5">
+              <span className="font-extrabold text-blue-600 flex items-center gap-1">
                 <Info size={12} /> Solução de Erro de Conexão (Google)
               </span>
-              <p className="text-slate-400 leading-normal">
-                Se você receber o erro de <span className="text-rose-400 font-mono">auth/domínio não autorizado</span> ao usar a integração Google fora do AI Studio, adicione o URL atual da barra de endereços na lista de <strong>Domínios Autorizados</strong> dentro do painel do seu Console Firebase (Autenticação → Configurações → Domínios Autorizados).
+              <p className="text-slate-500 leading-normal font-medium">
+                Se você receber o erro de <span className="text-rose-600 font-mono">auth/domínio não autorizado</span> ao usar a integração Google fora do AI Studio, adicione o URL atual da barra de endereços na lista de <strong>Domínios Autorizados</strong> dentro do painel do seu Console Firebase (Autenticação → Configurações → Domínios Autorizados).
               </p>
             </div>
 
@@ -1021,24 +1104,24 @@ export default function App() {
           
           {/* A. MULTI-COMPANY WORKSPACE SELECTOR */}
           {!activeCompany ? (
-            <div className="flex-1 flex flex-col justify-center items-center p-6">
+            <div className="flex-1 flex flex-col justify-center items-center p-6 bg-slate-50">
               <div className="w-full max-w-4xl space-y-8 animate-fade-in">
                 
                 {/* Selector Header Bar */}
-                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-800 pb-5">
+                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-200 pb-5">
                   <div className="space-y-1">
-                    <span className="text-xs font-black text-blue-500 uppercase tracking-widest font-mono">Seletor de Concessionárias</span>
-                    <h2 className="text-2.5xl font-extrabold text-white tracking-tight">Suas Empresas Registradas</h2>
-                    <p className="text-xs text-slate-400">Entre em uma empresa operacional existente ou abra uma nova operação regional.</p>
+                    <span className="text-xs font-black text-blue-600 uppercase tracking-widest font-mono">Seletor de Concessionárias</span>
+                    <h2 className="text-2xl font-extrabold text-slate-800 tracking-tight">Suas Empresas Registradas</h2>
+                    <p className="text-xs text-slate-500">Entre em uma empresa operacional existente ou abra uma nova operação regional.</p>
                   </div>
                   
                   <div className="flex items-center gap-3">
-                    <span className="text-xs font-bold text-slate-400 font-mono bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700">
+                    <span className="text-xs font-bold text-slate-600 font-mono bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-xs">
                       👤 {user.email}
                     </span>
                     <button
                       onClick={handleSignOut}
-                      className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:text-rose-400 text-xs font-bold rounded-lg transition-colors flex items-center gap-1"
+                      className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-700 hover:text-red-600 text-xs font-bold rounded-lg transition-colors flex items-center gap-1 cursor-pointer"
                     >
                       <LogOut size={13} /> Sair
                     </button>
@@ -1049,35 +1132,35 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
                   
                   {/* Left Column: Create new company */}
-                  <div className="md:col-span-5 bg-slate-800/60 rounded-2xl border border-slate-800 p-5 space-y-4 self-start">
+                  <div className="md:col-span-5 bg-white rounded-2xl border border-slate-200 p-5 space-y-4 self-start shadow-sm">
                     <div className="flex items-center gap-2">
-                      <div className="p-1.5 bg-blue-500/10 text-blue-400 rounded-lg">
+                      <div className="p-1.5 bg-blue-50 text-blue-600 rounded-lg">
                         <Building2 size={18} />
                       </div>
-                      <h3 className="text-sm font-black text-white uppercase tracking-wider">Registrar Concessionária</h3>
+                      <h3 className="text-xs font-black text-slate-700 uppercase tracking-wider">Registrar Concessionária</h3>
                     </div>
 
                     {companyError && (
-                      <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-300 rounded text-xs font-medium">
+                      <div className="p-3 bg-red-50 border border-red-200 text-red-700 rounded text-xs font-medium">
                         ⚠️ {companyError}
                       </div>
                     )}
 
                     <form className="space-y-4">
                       <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Nome Fantasia da Linha</label>
+                        <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Nome Fantasia da Linha</label>
                         <input
                           type="text"
                           required
                           placeholder="Ex: Viação Cometa SP"
                           value={newCompanyName}
                           onChange={(e) => setNewCompanyName(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 text-slate-900 rounded text-xs focus:outline-none focus:border-blue-500"
                         />
                       </div>
 
                       <div className="space-y-1">
-                        <label className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Sigla de Frota / Identificador</label>
+                        <label className="text-[10px] text-slate-500 font-bold uppercase tracking-wider block">Sigla de Frota / Identificador</label>
                         <input
                           type="text"
                           required
@@ -1085,7 +1168,7 @@ export default function App() {
                           maxLength={4}
                           value={newCompanyCode}
                           onChange={(e) => setNewCompanyCode(e.target.value)}
-                          className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500 uppercase font-mono font-bold"
+                          className="w-full px-3 py-2 bg-slate-50 border border-slate-200 text-slate-900 rounded text-xs focus:outline-none focus:border-blue-500 uppercase font-mono font-bold"
                         />
                       </div>
 
@@ -1093,7 +1176,7 @@ export default function App() {
                         <button
                           type="button"
                           onClick={(e) => handleCreateCompanySubmit(e, false)}
-                          className="w-full py-2 bg-slate-700 hover:bg-slate-600 border border-slate-600 text-white rounded text-xs font-extrabold transition-all cursor-pointer"
+                          className="w-full py-2 bg-slate-100 hover:bg-slate-200 border border-slate-200 text-slate-755 rounded text-xs font-extrabold transition-all cursor-pointer"
                         >
                           Criar Empresa Vazia
                         </button>
@@ -1110,12 +1193,12 @@ export default function App() {
 
                   {/* Right Column: Grid list of existing companies */}
                   <div className="md:col-span-7 space-y-4">
-                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-widest block">Selecione uma Con concessionária Ativa</span>
+                    <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest block font-sans">Selecione uma Concessionária Ativa</span>
 
                     {companies.length === 0 ? (
-                      <div className="bg-slate-800/20 border border-slate-800/80 border-dashed rounded-2xl p-12 text-center space-y-3">
-                        <Building2 size={36} className="text-slate-600 mx-auto" />
-                        <h4 className="text-xs font-bold text-slate-400 uppercase tracking-widest">Nenhuma Empresa Cadastrada</h4>
+                      <div className="bg-slate-100/40 border border-slate-200 border-dashed rounded-2xl p-12 text-center space-y-3">
+                        <Building2 size={36} className="text-slate-400 mx-auto" />
+                        <h4 className="text-xs font-bold text-slate-500 uppercase tracking-widest">Nenhuma Empresa Cadastrada</h4>
                         <p className="text-xs text-slate-500 max-w-sm mx-auto leading-relaxed">
                           Utilize o formulário ao lado para registrar sua primeira empresa de ônibus. Escolha a opção "Criar e Popular" para testar instantaneamente com rotas simuladas intermunicipais!
                         </p>
@@ -1125,27 +1208,27 @@ export default function App() {
                         {companies.map(comp => (
                           <div
                             key={comp.id}
-                            className="bg-slate-800/60 hover:bg-slate-800 border border-slate-800 hover:border-blue-500/35 p-4 rounded-xl flex flex-col justify-between h-36 transition-all group shadow-sm hover:shadow-lg hover:shadow-blue-900/5 relative"
+                            className="bg-white hover:bg-slate-50/50 border border-slate-200 hover:border-blue-300 p-4 rounded-xl flex flex-col justify-between h-36 transition-all group shadow-sm hover:shadow-md relative"
                           >
                             <div className="space-y-1">
-                              <span className="inline-block py-0.5 px-2 bg-blue-500/10 text-blue-400 text-[10px] font-mono font-bold uppercase rounded-md mb-1.5 border border-blue-500/10">
+                              <span className="inline-block py-0.5 px-2 bg-blue-50 text-blue-600 text-[10px] font-mono font-bold uppercase rounded mb-1.5 border border-blue-105">
                                 Sigla: {comp.code}
                               </span>
-                              <h4 className="text-sm font-extrabold text-white pr-6 group-hover:text-blue-400 transition-colors line-clamp-1">{comp.name}</h4>
-                              <p className="text-[10px] text-slate-400 font-mono">Gerado em: {new Date(comp.createdAt).toLocaleDateString('pt-BR')}</p>
+                              <h4 className="text-sm font-extrabold text-slate-800 pr-6 group-hover:text-blue-600 transition-colors line-clamp-1">{comp.name}</h4>
+                              <p className="text-[10px] text-slate-500 font-sans font-medium">Gerado em: {new Date(comp.createdAt).toLocaleDateString('pt-BR')}</p>
                             </div>
 
                             <div className="flex justify-between items-center pt-2">
                               <button
                                 onClick={() => setActiveCompany(comp)}
-                                className="px-3.5 py-1.5 bg-blue-600/10 hover:bg-blue-600 border border-blue-500/20 text-blue-400 hover:text-white text-[11px] font-extrabold rounded-md transition-all flex items-center gap-1 cursor-pointer"
+                                className="px-3.5 py-1.5 bg-blue-50 hover:bg-blue-600 border border-blue-200 text-blue-600 hover:text-white text-[11px] font-extrabold rounded-md transition-all flex items-center gap-1 cursor-pointer"
                               >
                                 Entrar no Painel <ChevronRight size={11} />
                               </button>
 
                               <button
                                 onClick={() => handleDeleteCompany(comp.id)}
-                                className="text-slate-500 hover:text-red-400 p-1 rounded hover:bg-red-500/10 transition-colors"
+                                className="text-slate-400 hover:text-red-500 p-1 rounded hover:bg-red-50 transition-colors cursor-pointer"
                                 title="Deletar empresa"
                               >
                                 <Trash2 size={13} />
@@ -1165,20 +1248,20 @@ export default function App() {
           ) : (
             
             /* B. CORE ACTIVE COMPANY BUSINESS TERMINAL */
-            <div className="flex-1 flex flex-col md:flex-row">
+            <div className="flex-1 flex flex-col md:flex-row bg-slate-50">
               
               {/* Sidebar Tabs */}
-              <div className="w-full md:w-64 bg-slate-850 border-r border-slate-800/80 flex flex-col justify-between">
+              <div className="w-full md:w-64 bg-slate-100 border-r border-slate-200 flex flex-col justify-between shadow-xs">
                 
                 {/* Company details brand */}
-                <div className="p-4 border-b border-slate-800/80 space-y-3">
+                <div className="p-4 border-b border-slate-200 space-y-3 bg-slate-150/50">
                   <div className="flex items-center gap-2">
-                    <div className="p-1.5 bg-blue-600 text-white rounded-lg font-mono font-black text-xs">
+                    <div className="p-1.5 bg-blue-600 text-white rounded-lg font-mono font-black text-xs shadow-sm">
                       {activeCompany.code}
                     </div>
                     <div className="truncate">
-                      <h3 className="text-xs font-black text-white uppercase tracking-wider truncate">{activeCompany.name}</h3>
-                      <span className="text-[10px] text-slate-400 font-mono block">Operação Regional Ativa</span>
+                      <h3 className="text-xs font-black text-slate-850 uppercase tracking-wider truncate">{activeCompany.name}</h3>
+                      <span className="text-[10px] text-slate-500 font-sans font-semibold block">Operação Regional Ativa</span>
                     </div>
                   </div>
 
@@ -1188,14 +1271,14 @@ export default function App() {
                         setActiveCompany(null);
                         setActiveTab('dashboard');
                       }}
-                      className="w-full py-1.5 px-2 bg-slate-800 hover:bg-slate-700/80 text-[10px] font-bold uppercase text-slate-300 hover:text-white rounded border border-slate-700 text-center transition-all flex items-center justify-center gap-1"
+                      className="w-full py-1.5 px-2 bg-white hover:bg-slate-200/50 text-[10px] font-bold uppercase text-slate-700 hover:text-slate-900 rounded border border-slate-250 text-center transition-all flex items-center justify-center gap-1 shadow-xs cursor-pointer"
                     >
                       🔄 Alternar Empresa
                     </button>
                     
                     <button
                       onClick={handleSeedActiveCompany}
-                      className="w-full py-1.5 px-2 bg-slate-900 hover:bg-slate-800/80 text-[9px] font-extrabold uppercase text-amber-400 hover:text-amber-350 rounded border border-amber-500/20 text-center transition-all flex items-center justify-center gap-1"
+                      className="w-full py-1.5 px-2 bg-white hover:bg-slate-200/50 text-[9px] font-extrabold uppercase text-amber-600 hover:text-amber-700 rounded border border-slate-250 text-center transition-all flex items-center justify-center gap-1 shadow-xs cursor-pointer"
                     >
                       ✨ Popular Dados Demo
                     </button>
@@ -1203,7 +1286,7 @@ export default function App() {
                 </div>
 
                 {/* Tab Navigation Menu */}
-                <div className="flex-1 p-3 space-y-1">
+                <div className="flex-1 p-3 space-y-1 bg-slate-100">
                   {[
                     { id: 'dashboard', label: 'Dashboard Operacional', icon: TrendingUp },
                     { id: 'cities', label: 'Cidades Atendidas', icon: MapPin },
@@ -1218,10 +1301,10 @@ export default function App() {
                       <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id as any)}
-                        className={`w-full text-left px-3.5 py-2.5 rounded-lg text-xs font-semibold flex items-center justify-between transition-all ${
+                        className={`w-full text-left px-3.5 py-2.5 rounded-lg text-xs flex items-center justify-between border transition-all cursor-pointer shadow-xs ${
                           isActive 
-                            ? 'bg-blue-600 text-white font-extrabold shadow-sm shadow-blue-600/10' 
-                            : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'
+                            ? 'bg-blue-600 text-white border-blue-600 font-black shadow-md shadow-blue-600/15' 
+                            : 'bg-white border-slate-200 text-slate-700 hover:bg-blue-50/50 hover:border-blue-350 hover:text-blue-600 font-extrabold'
                         }`}
                       >
                         <span className="flex items-center gap-2.5">
@@ -1230,17 +1313,17 @@ export default function App() {
                         
                         {/* Indicators badge count */}
                         {tab.id === 'cities' && cities.length > 0 && (
-                          <span className={`${isActive ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-400'} text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold`}>
+                          <span className={`${isActive ? 'bg-white text-blue-600' : 'bg-slate-200 text-slate-600'} text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold`}>
                             {cities.length}
                           </span>
                         )}
                         {tab.id === 'fleet' && buses.length > 0 && (
-                          <span className={`${isActive ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-400'} text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold`}>
+                          <span className={`${isActive ? 'bg-white text-blue-600' : 'bg-slate-200 text-slate-600'} text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold`}>
                             {buses.length}
                           </span>
                         )}
                         {tab.id === 'lines' && lines.length > 0 && (
-                          <span className={`${isActive ? 'bg-white text-blue-600' : 'bg-slate-800 text-slate-400'} text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold`}>
+                          <span className={`${isActive ? 'bg-white text-blue-600' : 'bg-slate-200 text-slate-600'} text-[10px] px-1.5 py-0.5 rounded-md font-mono font-bold`}>
                             {lines.length}
                           </span>
                         )}
@@ -1255,14 +1338,14 @@ export default function App() {
                 </div>
 
                 {/* Footer account status */}
-                <div className="p-3 bg-slate-900 border-t border-slate-800 flex items-center justify-between">
+                <div className="p-3 bg-slate-100 border-t border-slate-205 flex items-center justify-between">
                   <div className="truncate pr-2">
                     <span className="text-[10px] text-slate-500 font-bold uppercase block tracking-wider">Operador Logado</span>
-                    <span className="text-xs text-slate-300 font-mono truncate block">{user.email}</span>
+                    <span className="text-xs text-slate-650 font-mono truncate block font-medium">{user.email}</span>
                   </div>
                   <button 
                     onClick={handleSignOut}
-                    className="p-1.5 bg-slate-800 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded-md transition-colors"
+                    className="p-1.5 bg-slate-200 hover:bg-red-600 hover:text-white text-slate-550 rounded-md transition-all cursor-pointer"
                     title="Excluir sessão"
                   >
                     <LogOut size={13} />
@@ -1272,7 +1355,7 @@ export default function App() {
               </div>
 
               {/* Central Tab Content Layout */}
-              <div className="flex-1 bg-slate-900 p-6 overflow-y-auto space-y-6">
+              <div className="flex-1 bg-slate-50 p-6 overflow-y-auto space-y-6">
                 
                 {/* 1. DASHBOARD PAGE */}
                 {activeTab === 'dashboard' && (
@@ -1281,49 +1364,49 @@ export default function App() {
                     {/* Metrics Panel */}
                     <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                       
-                      <div className="bg-slate-800 border border-slate-800 p-4 rounded-xl flex items-center gap-3 shadow-xs">
-                        <div className="p-3 bg-blue-600/10 text-blue-400 rounded-lg">
+                      <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-center gap-3 shadow-sm">
+                        <div className="p-3 bg-blue-50 text-blue-600 rounded-lg">
                           <DollarSign size={20} />
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Faturamento Sim.</span>
-                          <span className="text-sm font-extrabold text-white font-mono">
+                          <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Faturamento Sim.</span>
+                          <span className="text-sm font-extrabold text-slate-800 font-mono">
                             R$ {totalRevenue.toLocaleString('pt-BR')}
                           </span>
                         </div>
                       </div>
 
-                      <div className="bg-slate-800 border border-slate-800 p-4 rounded-xl flex items-center gap-3 shadow-xs">
-                        <div className="p-3 bg-purple-600/10 text-purple-400 rounded-lg">
+                      <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-center gap-3 shadow-sm">
+                        <div className="p-3 bg-purple-50 text-purple-600 rounded-lg">
                           <Users size={20} />
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Total Passageiros</span>
-                          <span className="text-sm font-extrabold text-white font-mono">
+                          <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Total Passageiros</span>
+                          <span className="text-sm font-extrabold text-slate-800 font-mono">
                             {totalPassengers.toLocaleString('pt-BR')} pax
                           </span>
                         </div>
                       </div>
 
-                      <div className="bg-slate-800 border border-slate-800 p-4 rounded-xl flex items-center gap-3 shadow-xs">
-                        <div className="p-3 bg-emerald-600/10 text-emerald-400 rounded-lg">
+                      <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-center gap-3 shadow-sm">
+                        <div className="p-3 bg-emerald-50 text-emerald-600 rounded-lg">
                           <TrendingUp size={20} />
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider font-sans">Ocupação Média</span>
-                          <span className="text-sm font-extrabold text-white font-mono">
+                          <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider font-sans">Ocupação Média</span>
+                          <span className="text-sm font-extrabold text-slate-800 font-mono">
                             {avgOccupancy}%
                           </span>
                         </div>
                       </div>
 
-                      <div className="bg-slate-800 border border-slate-800 p-4 rounded-xl flex items-center gap-3 shadow-xs">
-                        <div className="p-3 bg-slate-600/10 text-slate-300 rounded-lg">
+                      <div className="bg-white border border-slate-200 p-4 rounded-xl flex items-center gap-3 shadow-sm">
+                        <div className="p-3 bg-slate-100 text-slate-600 rounded-lg">
                           <BusIcon size={20} />
                         </div>
                         <div>
-                          <span className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Frota Cadastro</span>
-                          <span className="text-sm font-extrabold text-white font-mono">
+                          <span className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Frota Cadastro</span>
+                          <span className="text-sm font-extrabold text-slate-800 font-mono">
                             {buses.length} ônibus
                           </span>
                         </div>
@@ -1335,27 +1418,27 @@ export default function App() {
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                       
                       {/* Left side: Revenue chart */}
-                      <div className="lg:col-span-8 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
-                        <div className="flex justify-between items-center pb-2 border-b border-slate-700/60">
+                      <div className="lg:col-span-8 bg-white border border-slate-205 p-5 rounded-2xl space-y-4 shadow-sm">
+                        <div className="flex justify-between items-center pb-2 border-b border-slate-150">
                           <div className="space-y-0.5">
-                            <h4 className="text-xs font-black text-white uppercase tracking-wider">Faturamento Operacional e Fluxo</h4>
-                            <span className="text-[10px] text-slate-400 block font-sans">Histórico acumulado de faturamento por viagens concluídas</span>
+                            <h4 className="text-xs font-black text-slate-850 uppercase tracking-wider">Faturamento Operacional e Fluxo</h4>
+                            <span className="text-[10px] text-slate-500 block font-sans font-medium">Histórico acumulado de faturamento por viagens concluídas</span>
                           </div>
                         </div>
 
                         {completedTrips.length === 0 ? (
-                          <div className="py-24 text-center text-xs text-slate-500 bg-slate-900/40 border border-slate-800/80 border-dashed rounded-xl flex flex-col justify-center items-center gap-2">
-                            <TrendingUp size={24} className="text-slate-600" />
+                          <div className="py-24 text-center text-xs text-slate-500 bg-slate-100/30 border border-slate-200 border-dashed rounded-xl flex flex-col justify-center items-center gap-2">
+                            <TrendingUp size={24} className="text-slate-400" />
                             <span>Sem histórico financeiro recente. Inicie e conclua viagens simuladas na aba "Simulador" para preencher este painel.</span>
                           </div>
                         ) : (
                           <div className="h-64">
                             <ResponsiveContainer width="100%" height="100%">
                               <LineChart data={getRevenueChartData()}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                                <XAxis dataKey="data" stroke="#94a3b8" fontSize={11} className="font-mono" />
-                                <YAxis stroke="#94a3b8" fontSize={11} />
-                                <Tooltip contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #475569' }} labelStyle={{ color: '#fff' }} />
+                                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                                <XAxis dataKey="data" stroke="#475569" fontSize={11} className="font-mono" />
+                                <YAxis stroke="#475569" fontSize={11} />
+                                <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1.5px solid #cbd5e1', borderRadius: '8px' }} labelStyle={{ color: '#1e293b', fontWeight: 'bold' }} />
                                 <Legend />
                                 <RechartsLine type="monotone" dataKey="Faturamento" name="Faturamento (R$)" stroke="#2563eb" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
                                 <RechartsLine type="monotone" dataKey="Passageiros" name="Paxs Transportados" stroke="#8b5cf6" strokeWidth={2} />
@@ -1366,15 +1449,15 @@ export default function App() {
                       </div>
 
                       {/* Right side: Fleet distribution */}
-                      <div className="lg:col-span-4 bg-slate-800 border border-slate-800 p-5 rounded-2xl flex flex-col justify-between">
-                        <div className="space-y-0.5 pb-2 border-b border-slate-700/60">
-                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Comportamento da Frota</h4>
-                          <span className="text-[10px] text-slate-400 block">Classificação de carros cadastrados</span>
+                      <div className="lg:col-span-4 bg-white border border-slate-205 p-5 rounded-2xl flex flex-col justify-between shadow-sm">
+                        <div className="space-y-0.5 pb-2 border-b border-slate-150">
+                          <h4 className="text-xs font-black text-slate-850 uppercase tracking-wider">Comportamento da Frota</h4>
+                          <span className="text-[10px] text-slate-500 block font-medium">Classificação de carros cadastrados</span>
                         </div>
 
                         {buses.length === 0 ? (
                           <div className="py-12 text-center text-xs text-slate-500 flex flex-col justify-center gap-1.5 self-center">
-                            <BusIcon size={24} className="text-slate-700 mx-auto" />
+                            <BusIcon size={24} className="text-slate-400 mx-auto" />
                             <span>Sem ônibus cadastrados na frota.</span>
                           </div>
                         ) : (
@@ -1393,12 +1476,12 @@ export default function App() {
                             </div>
                             <div className="flex flex-col gap-1 text-[11px] font-sans">
                               {getServiceDistributionData().map((entry, idx) => (
-                                <div key={idx} className="flex justify-between items-center text-slate-300">
+                                <div key={idx} className="flex justify-between items-center text-slate-600 font-medium">
                                   <span className="flex items-center gap-1.5">
                                     <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: entry.color }}></span>
                                     {entry.name}
                                   </span>
-                                  <span className="font-mono font-bold text-white">{entry.value} ud.</span>
+                                  <span className="font-mono font-bold text-slate-800">{entry.value} ud.</span>
                                 </div>
                               ))}
                             </div>
@@ -1409,14 +1492,14 @@ export default function App() {
                     </div>
 
                     {/* Operational indicators list (Feasibilities alerts) */}
-                    <div className="bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
+                    <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4 shadow-sm">
                       <div>
-                        <h4 className="text-xs font-black text-white uppercase tracking-wider">Diagnóstico Operacional de Viabilidade</h4>
-                        <span className="text-[10px] text-slate-440 block">Alertas preventivos e checagem de horários sobrepostos</span>
+                        <h4 className="text-xs font-black text-slate-850 uppercase tracking-wider">Diagnóstico Operacional de Viabilidade</h4>
+                        <span className="text-[10px] text-slate-500 block font-medium">Alertas preventivos e checagem de horários sobrepostos</span>
                       </div>
 
                       {schedules.length === 0 ? (
-                        <div className="p-4 bg-slate-900/40 rounded-xl text-center text-[11px] text-slate-500">
+                        <div className="p-4 bg-slate-50 border border-slate-150 rounded-xl text-center text-[11px] text-slate-500 font-medium">
                           Nenhum horário registrado operacionalmente para análise.
                         </div>
                       ) : (
@@ -1433,21 +1516,21 @@ export default function App() {
                                 key={sch.id}
                                 className={`p-3.5 rounded-xl border flex items-start gap-3 transition-colors ${
                                   check.level === 'warning'
-                                    ? 'bg-red-500/10 border-red-500/20 text-red-300'
+                                    ? 'bg-rose-50 border-rose-100 text-rose-700'
                                     : check.level === 'info'
-                                    ? 'bg-amber-500/10 border-amber-500/20 text-amber-300'
-                                    : 'bg-green-500/10 border-green-500/20 text-green-300'
+                                    ? 'bg-amber-50 border-amber-100 text-amber-700'
+                                    : 'bg-emerald-50 border-emerald-100 text-emerald-700'
                                 }`}
                               >
-                                {check.level === 'warning' && <AlertTriangle size={16} className="text-red-400 mt-0.5 flex-shrink-0" />}
-                                {check.level === 'info' && <AlertTriangle size={16} className="text-amber-400 mt-0.5 flex-shrink-0" />}
-                                {check.level === 'success' && <Check size={16} className="text-green-400 mt-0.5 flex-shrink-0" />}
+                                {check.level === 'warning' && <AlertTriangle size={16} className="text-rose-500 mt-0.5 flex-shrink-0" />}
+                                {check.level === 'info' && <AlertTriangle size={16} className="text-amber-500 mt-0.5 flex-shrink-0" />}
+                                {check.level === 'success' && <Check size={16} className="text-emerald-500 mt-0.5 flex-shrink-0" />}
 
                                 <div className="space-y-1 leading-normal">
-                                  <div className="font-extrabold text-[#fff]">
+                                  <div className="font-extrabold text-slate-800">
                                     {origin?.name} ➔ {dest?.name} ({sch.departureTime})
                                   </div>
-                                  <p className="text-[11px] opacity-85">{check.message}</p>
+                                  <p className="text-[11px] opacity-90 font-medium">{check.message}</p>
                                 </div>
                               </div>
                             );
@@ -1465,33 +1548,33 @@ export default function App() {
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                       
                       {/* Left: city register form */}
-                      <div className="lg:col-span-4 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
-                        <div className="space-y-0.5 border-b border-slate-700/60 pb-3">
-                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Cadastrar Cidade</h4>
-                          <span className="text-[10px] text-slate-400">Insira as localidades atendidas em suas linhas</span>
+                      <div className="lg:col-span-4 bg-white border border-slate-200 p-5 rounded-2xl space-y-4 shadow-sm">
+                        <div className="space-y-0.5 border-b border-slate-150 pb-3">
+                          <h4 className="text-xs font-black text-slate-850 uppercase tracking-wider">Cadastrar Cidade</h4>
+                          <span className="text-[10px] text-slate-500 font-medium font-sans">Insira as localidades atendidas em suas linhas</span>
                         </div>
 
                         {cityError && (
-                          <div className="p-2.5 bg-red-500/15 border border-red-500/25 text-red-300 rounded text-xs">
+                          <div className="p-2.5 bg-red-50 border border-red-150 text-red-700 rounded text-xs font-medium">
                             {cityError}
                           </div>
                         )}
 
                         <form onSubmit={handleCreateCity} className="space-y-4 font-sans">
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Nome do Município</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider font-sans">Nome do Município</label>
                             <input
                               type="text"
                               required
                               placeholder="Ex: Ribeirão Preto"
                               value={cityName}
                               onChange={(e) => setCityName(e.target.value)}
-                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500"
+                              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded text-xs focus:outline-none focus:border-blue-500 text-slate-850"
                             />
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Estado (UF)</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider font-sans">Estado (UF)</label>
                             <input
                               type="text"
                               required
@@ -1499,12 +1582,12 @@ export default function App() {
                               maxLength={2}
                               value={cityState}
                               onChange={(e) => setCityState(e.target.value)}
-                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500"
+                              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded text-xs focus:outline-none focus:border-blue-500 text-slate-850"
                             />
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Sigla IATA (3 Letras)</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider font-sans">Sigla IATA (3 Letras)</label>
                             <input
                               type="text"
                               required
@@ -1512,8 +1595,37 @@ export default function App() {
                               maxLength={3}
                               value={cityCode}
                               onChange={(e) => setCityCode(e.target.value)}
-                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500 font-mono font-bold uppercase"
+                              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded text-xs focus:outline-none focus:border-blue-500 font-mono font-bold uppercase text-slate-855"
                             />
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                              <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider font-sans">Dist. ao Hub (Km)</label>
+                              <input
+                                type="number"
+                                required
+                                min={0}
+                                value={cityDistanceToHub}
+                                onChange={(e) => setCityDistanceToHub(Number(e.target.value))}
+                                className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded text-xs focus:outline-none focus:border-blue-500 text-slate-850 font-bold"
+                              />
+                            </div>
+
+                            <div className="space-y-1">
+                              <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider font-sans">Vocação Local</label>
+                              <select
+                                value={cityVocation}
+                                onChange={(e) => setCityVocation(e.target.value as any)}
+                                className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800"
+                              >
+                                <option value="comercial">💼 Comercial / Saúde</option>
+                                <option value="industrial">🏭 Polo Industrial</option>
+                                <option value="turistica">🏖️ Turística / Lazer</option>
+                                <option value="universitaria">🎓 Polo Universitário</option>
+                                <option value="dormitorio">🏠 Cidade Dormitório</option>
+                              </select>
+                            </div>
                           </div>
 
                           <button
@@ -1526,15 +1638,15 @@ export default function App() {
                       </div>
 
                       {/* Right: cities grid table */}
-                      <div className="lg:col-span-8 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
-                        <div>
-                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Localidades de Operação</h4>
-                          <span className="text-[10px] text-slate-400 block pb-1">Gerenciador de terminais rodoviários e hubs regionais</span>
+                      <div className="lg:col-span-8 bg-white border border-slate-200 p-5 rounded-2xl space-y-4 shadow-sm">
+                        <div className="pb-1 border-b border-slate-150">
+                          <h4 className="text-xs font-black text-slate-855 uppercase tracking-wider pb-1">Localidades de Operação</h4>
+                          <span className="text-[10px] text-slate-500 block font-medium font-sans pb-1">Gerenciador de terminais rodoviários e hubs regionais</span>
                         </div>
 
                         {cities.length === 0 ? (
-                          <div className="py-24 text-center text-slate-500 border border-slate-800/80 border-dashed rounded-xl text-xs space-y-2">
-                            <MapPin size={24} className="text-slate-700 mx-auto" />
+                          <div className="py-24 text-center text-slate-500 border border-slate-200 border-dashed rounded-xl text-xs space-y-2">
+                            <MapPin size={24} className="text-slate-400 mx-auto" />
                             <span>Nenhuma localidade registrada. Adicione cidades no painel ao lado.</span>
                           </div>
                         ) : (
@@ -1542,23 +1654,39 @@ export default function App() {
                             {cities.map(ct => {
                               // count connected routes
                               const linesCount = lines.filter(l => l.originCityId === ct.id || l.destinationCityId === ct.id).length;
+                              // get vocation label and badge color
+                              const vocationLabels: Record<string, string> = {
+                                comercial: '💼 Comercial',
+                                industrial: '🏭 Industrial',
+                                turistica: '🏖️ Turístico',
+                                universitaria: '🎓 Acadêmico',
+                                dormitorio: '🏠 Dormitório',
+                              };
                               return (
                                 <div
                                   key={ct.id}
-                                  className="p-3 bg-slate-900 border border-slate-800 hover:border-slate-700 rounded-xl flex justify-between items-center shadow-xs"
+                                  className="p-3.5 bg-white border border-slate-200 hover:border-blue-400 rounded-xl flex justify-between items-start shadow-xs transition-all hover:shadow-md relative"
                                 >
-                                  <div>
-                                    <span className="inline-block px-1.5 py-0.5 bg-slate-800 border border-slate-700 font-mono font-bold text-[9.5px] text-slate-300 rounded mb-1">
-                                      {ct.code} - {ct.state}
-                                    </span>
-                                    <h5 className="text-xs font-extrabold text-white">{ct.name}</h5>
-                                    <span className="text-[9px] text-slate-500 font-medium font-sans">
-                                      {linesCount === 0 ? 'Sem conexões' : `${linesCount} rota(s) intermunicipais`}
-                                    </span>
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="inline-block px-1.5 py-0.5 bg-slate-100 border border-slate-200 font-mono font-bold text-[9.5px] text-slate-700 rounded">
+                                        {ct.code} - {ct.state}
+                                      </span>
+                                      <span className="inline-block px-1.5 py-0.5 bg-blue-50 border border-blue-100 text-blue-700 font-bold text-[9px] rounded">
+                                        {vocationLabels[ct.vocation] || ct.vocation || 'Misto'}
+                                      </span>
+                                    </div>
+                                    <h5 className="text-xs font-black text-slate-800 pt-1">{ct.name}</h5>
+                                    <div className="space-y-0.5 font-sans font-medium text-[10px] text-slate-600">
+                                      {ct.distanceToHub !== undefined && (
+                                        <p>Distância ao Hub: <strong className="text-slate-800 font-mono">{ct.distanceToHub} km</strong></p>
+                                      )}
+                                      <p>{linesCount === 0 ? 'Sem conexões' : `${linesCount} rota(s) programada(s)`}</p>
+                                    </div>
                                   </div>
                                   <button
                                     onClick={() => handleDeleteCity(ct.id)}
-                                    className="text-slate-500 hover:text-red-400 p-1.5 rounded hover:bg-red-500/10 transition-colors"
+                                    className="text-slate-400 hover:text-red-500 p-1.5 rounded hover:bg-red-50 transition-colors cursor-pointer"
                                     title="Remover cidade"
                                   >
                                     <Trash2 size={13} />
@@ -1580,21 +1708,21 @@ export default function App() {
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                       
                       {/* Left side: register bus Form */}
-                      <div className="lg:col-span-4 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4 text-xs font-sans">
-                        <div className="space-y-0.5 border-b border-slate-705 pb-3">
-                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Adicionar Carro</h4>
-                          <span className="text-[10px] text-slate-400">Gerencie novos ônibus na garagem operacional</span>
+                      <div className="lg:col-span-4 bg-white border border-slate-200 p-5 rounded-2xl space-y-4 text-xs font-sans shadow-sm">
+                        <div className="space-y-0.5 border-b border-slate-150 pb-3">
+                          <h4 className="text-xs font-black text-slate-850 uppercase tracking-wider">Adicionar Carro</h4>
+                          <span className="text-[10px] text-slate-500 font-medium">Gerencie novos ônibus na garagem operacional</span>
                         </div>
 
                         {busError && (
-                          <div className="p-2.5 bg-red-500/15 border border-red-500/25 text-red-300 rounded text-xs font-semibold">
+                          <div className="p-2.5 bg-red-50 border border-red-150 text-red-700 rounded text-xs font-semibold">
                             ⚠️ {busError}
                           </div>
                         )}
 
                         <form onSubmit={handleCreateBus} className="space-y-4 font-sans">
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Identificador / Placa (Mercosul)</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Identificador / Placa (Mercosul)</label>
                             <input
                               type="text"
                               required
@@ -1602,28 +1730,28 @@ export default function App() {
                               maxLength={8}
                               value={busPlate}
                               onChange={(e) => setBusPlate(e.target.value)}
-                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500 font-mono font-bold"
+                              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded text-xs focus:outline-none focus:border-blue-500 font-mono font-bold text-slate-850"
                             />
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Chassi / Modelo de Carroceria</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Chassi / Modelo de Carroceria</label>
                             <input
                               type="text"
                               required
                               placeholder="Marcopolo Paradiso 1200 G8"
                               value={busModel}
                               onChange={(e) => setBusModel(e.target.value)}
-                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500"
+                              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded text-xs focus:outline-none focus:border-blue-500 text-slate-850"
                             />
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Serviço & Cabine</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Serviço & Cabine</label>
                             <select
                               value={busServiceType}
                               onChange={(e) => setBusServiceType(e.target.value as any)}
-                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none text-white focus:border-blue-500"
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded text-xs focus:outline-none text-slate-800 focus:border-blue-500"
                             >
                               <option value="convencional">🚌 Convencional (46 assentos)</option>
                               <option value="executivo">🌟 Executivo (38 assentos)</option>
@@ -1631,7 +1759,7 @@ export default function App() {
                             </select>
                           </div>
 
-                          <div className="p-3 bg-slate-900/50 rounded-lg border border-slate-700 text-[10.5px] leading-normal text-slate-400 font-medium">
+                          <div className="p-3 bg-slate-50 rounded-lg border border-slate-150 text-[10.5px] leading-normal text-slate-500 font-medium font-sans">
                             📌 O limite de assentos é auto-ajustado conforme o tipo de cabine para assegurar o conforto regulado pela ANTT.
                           </div>
 
@@ -1645,15 +1773,15 @@ export default function App() {
                       </div>
 
                       {/* Right side: Buses Grid list */}
-                      <div className="lg:col-span-8 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
-                        <div>
-                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Frota de Veículos</h4>
-                          <span className="text-[10px] text-slate-400 block">Garagem operacional de carros em serviço ativo</span>
+                      <div className="lg:col-span-8 bg-white border border-slate-200 p-5 rounded-2xl space-y-4 shadow-sm">
+                        <div className="pb-1 border-b border-slate-150">
+                          <h4 className="text-xs font-black text-slate-850 uppercase tracking-wider">Frota de Veículos</h4>
+                          <span className="text-[10px] text-slate-500 block font-medium">Garagem operacional de carros em serviço ativo</span>
                         </div>
 
                         {buses.length === 0 ? (
-                          <div className="py-24 text-center text-slate-400 border border-slate-800/80 border-dashed rounded-xl text-xs space-y-2">
-                            <BusIcon size={24} className="text-slate-700 mx-auto" />
+                          <div className="py-24 text-center text-slate-400 border border-slate-200 border-dashed rounded-xl text-xs space-y-2">
+                            <BusIcon size={24} className="text-slate-400 mx-auto" />
                             <span>Nenhum veículo ativo na frota.</span>
                           </div>
                         ) : (
@@ -1661,28 +1789,28 @@ export default function App() {
                             {buses.map(b => (
                               <div
                                 key={b.id}
-                                className="p-4 bg-slate-900 border border-slate-800 rounded-xl relative group flex flex-col justify-between"
+                                className="p-4 bg-slate-50/40 border border-slate-202 rounded-xl relative group flex flex-col justify-between hover:border-slate-300 transition-colors"
                               >
                                 <div className="space-y-1.5">
                                   <div className="flex justify-between items-start">
-                                    <span className="px-2 py-0.5 bg-slate-800 border border-slate-700 text-slate-200 font-mono font-bold text-xs rounded">
+                                    <span className="px-2 py-0.5 bg-slate-100 border border-slate-200 text-slate-700 font-mono font-bold text-xs rounded">
                                       🚏 {b.plate}
                                     </span>
 
                                     <div className="flex items-center gap-1.5">
                                       <span className={`text-[9px] font-black tracking-widest uppercase p-1 rounded font-mono ${
                                         b.status === 'disponivel'
-                                          ? 'bg-green-500/10 text-green-400 border border-green-500/20'
+                                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
                                           : b.status === 'em_viagem'
-                                          ? 'bg-blue-500/15 text-blue-400 border border-blue-500/10'
-                                          : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                          ? 'bg-blue-50 text-blue-700 border border-blue-105'
+                                          : 'bg-rose-50 text-rose-700 border border-rose-100'
                                       }`}>
                                         {b.status === 'disponivel' ? 'Disponível' : b.status === 'em_viagem' ? 'Na Estrada' : 'Manutenção'}
                                       </span>
                                       
                                       <button
                                         onClick={() => handleDeleteBus(b.id)}
-                                        className="text-slate-500 hover:text-red-400 p-0.5 rounded transition-colors cursor-pointer"
+                                        className="text-slate-400 hover:text-red-500 p-0.5 rounded transition-colors cursor-pointer"
                                         title="Remover carro"
                                       >
                                         <Trash2 size={13} />
@@ -1690,21 +1818,21 @@ export default function App() {
                                     </div>
                                   </div>
 
-                                  <h5 className="text-xs font-extrabold text-white font-sans">{b.model}</h5>
+                                  <h5 className="text-xs font-extrabold text-slate-800 font-sans">{b.model}</h5>
                                 </div>
 
-                                <div className="flex justify-between items-center text-[11px] pt-3 mt-3 border-t border-slate-800/80 font-sans">
+                                <div className="flex justify-between items-center text-[11px] pt-3 mt-3 border-t border-slate-150 font-sans">
                                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
                                     b.serviceType === 'leito'
-                                      ? 'bg-purple-500/15 text-purple-300'
+                                      ? 'bg-purple-100 text-purple-700 font-extrabold'
                                       : b.serviceType === 'executivo'
-                                      ? 'bg-blue-500/15 text-blue-300'
-                                      : 'bg-slate-800 text-slate-400'
+                                      ? 'bg-blue-100 text-blue-700 font-extrabold'
+                                      : 'bg-slate-100 text-slate-700 font-extrabold'
                                   }`}>
                                     {b.serviceType === 'leito' ? '💤 Leito' : b.serviceType === 'executivo' ? '🌟 Executivo' : '🚌 Convencional'}
                                   </span>
 
-                                  <span className="text-slate-400 font-bold font-mono">
+                                  <span className="text-slate-500 font-bold font-mono">
                                     {b.capacity} Assentos
                                   </span>
                                 </div>
@@ -1724,25 +1852,25 @@ export default function App() {
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                       
                       {/* Left: create Line route form */}
-                      <div className="lg:col-span-4 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
-                        <div className="space-y-0.5 border-b border-slate-700/60 pb-3">
-                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Estruturar Rota</h4>
-                          <span className="text-[10px] text-slate-400 block font-sans">Desenhe uma linha conectando hubs rodoviários</span>
+                      <div className="lg:col-span-4 bg-white border border-slate-200 p-5 rounded-2xl space-y-4 text-xs font-sans shadow-sm">
+                        <div className="space-y-0.5 border-b border-slate-150 pb-3">
+                          <h4 className="text-xs font-black text-slate-850 uppercase tracking-wider">Estruturar Rota</h4>
+                          <span className="text-[10px] text-slate-500 block font-sans font-medium font-sans">Desenhe uma linha conectando hubs rodoviários</span>
                         </div>
 
                         {lineError && (
-                          <div className="p-2.5 bg-red-500/15 border border-red-500/25 text-red-300 rounded text-xs font-semibold">
+                          <div className="p-2.5 bg-red-50 border border-red-150 text-red-700 rounded text-xs font-semibold">
                             ⚠️ {lineError}
                           </div>
                         )}
 
                         <form onSubmit={handleCreateLine} className="space-y-4 text-xs font-sans">
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Cidade de Origem</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Cidade de Origem</label>
                             <select
                               value={lineOriginCityId}
                               onChange={(e) => setLineOriginCityId(e.target.value)}
-                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800"
                             >
                               <option value="">-- Selecione a Origem --</option>
                               {cities.map(ct => (
@@ -1752,11 +1880,11 @@ export default function App() {
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block tracking-wider uppercase">Cidade de Destino</label>
+                            <label className="text-[10px] text-slate-500 font-bold block tracking-wider uppercase">Cidade de Destino</label>
                             <select
                               value={lineDestinationCityId}
                               onChange={(e) => setLineDestinationCityId(e.target.value)}
-                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800"
                             >
                               <option value="">-- Selecione o Destino --</option>
                               {cities.map(ct => (
@@ -1767,43 +1895,43 @@ export default function App() {
 
                           <div className="grid grid-cols-2 gap-2">
                             <div className="space-y-1">
-                              <label className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider">Distância (Km)</label>
+                              <label className="text-[9px] text-slate-500 font-bold block uppercase tracking-wider">Distância (Km)</label>
                               <input
                                 type="number"
                                 required
                                 value={lineDistance}
                                 onChange={(e) => setLineDistance(Number(e.target.value))}
-                                className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded text-xs text-center font-bold"
+                                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs text-center font-bold text-slate-800"
                               />
                             </div>
                             <div className="space-y-1">
-                              <label className="text-[9px] text-slate-400 font-bold block uppercase tracking-wider font-sans">Duração (Minutos)</label>
+                              <label className="text-[9px] text-slate-500 font-bold block uppercase tracking-wider font-sans">Duração (Minutos)</label>
                               <input
                                 type="number"
                                 required
                                 value={lineDuration}
                                 onChange={(e) => setLineDuration(Number(e.target.value))}
-                                className="w-full px-3 py-1.5 bg-slate-900 border border-slate-700 rounded text-xs text-center font-bold"
+                                className="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs text-center font-bold text-slate-800"
                               />
                             </div>
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Categoria de Linha Padrão</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Estilo de Itinerário</label>
                             <select
-                              value={lineServiceType}
-                              onChange={(e) => setLineServiceType(e.target.value as any)}
-                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                              value={lineItineraryType}
+                              onChange={(e) => setLineItineraryType(e.target.value as any)}
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800 font-semibold"
                             >
-                              <option value="convencional">Bus Convencional</option>
-                              <option value="executivo">Bus Executivo</option>
-                              <option value="leito">Bus Leito Especial</option>
+                              <option value="direta">⚡ Expressa / Direta</option>
+                              <option value="paradas">🛑 Pinga-Pinga (Com Paradas)</option>
+                              <option value="semi-direta">🌦️ Semi-Direta</option>
                             </select>
                           </div>
 
                           <button
                             type="submit"
-                            className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-extrabold transition-all cursor-pointer"
+                            className="w-full py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-extrabold transition-all cursor-pointer shadow-sm"
                           >
                             Adicionar Nova Rota
                           </button>
@@ -1811,15 +1939,15 @@ export default function App() {
                       </div>
 
                       {/* Right: Grid of existing routes lines */}
-                      <div className="lg:col-span-8 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
-                        <div>
-                          <h4 className="text-xs font-black text-white uppercase tracking-wider">Rotas do Portfólio</h4>
-                          <span className="text-[10px] text-slate-400 block pb-1">Conexões vigentes de tráfego interestadual e intermunicipal</span>
+                      <div className="lg:col-span-8 bg-white border border-slate-200 p-5 rounded-2xl space-y-4 shadow-sm">
+                        <div className="pb-1 border-b border-slate-150">
+                          <h4 className="text-xs font-black text-slate-855 uppercase tracking-wider">Rotas do Portfólio</h4>
+                          <span className="text-[10px] text-slate-500 block font-medium font-sans pb-1">Conexões vigentes de tráfego interestadual e intermunicipal</span>
                         </div>
 
                         {lines.length === 0 ? (
-                          <div className="py-24 text-center text-slate-400 border border-slate-800/80 border-dashed rounded-xl text-xs space-y-2">
-                            <GitCommit size={24} className="text-slate-700 mx-auto" />
+                          <div className="py-24 text-center text-slate-400 border border-slate-200 border-dashed rounded-xl text-xs space-y-2">
+                            <GitCommit size={24} className="text-slate-400 mx-auto" />
                             <span>Nenhuma rota interestadual cadastrada.</span>
                           </div>
                         ) : (
@@ -1834,44 +1962,65 @@ export default function App() {
                               const m = l.duration % 60;
                               const dLabel = h > 0 ? `${h}h e ${m}m` : `${m}min`;
 
+                              // itinerary type badges
+                              const itineraryLabels: Record<string, string> = {
+                                direta: '⚡ Rota Direta',
+                                paradas: '🛑 Com Paradas',
+                                'semi-direta': '🌦️ Semi-Direta',
+                              };
+
                               return (
                                 <div
                                   key={l.id}
-                                  className="p-4 bg-slate-900 border border-slate-800 hover:border-slate-750 rounded-xl relative flex flex-col justify-between"
+                                  className="p-4 bg-white border border-slate-200 hover:border-blue-450 rounded-xl relative flex flex-col justify-between transition-colors hover:shadow-md group"
                                 >
-                                  <div className="space-y-1.5 flex-1">
+                                  <div className="space-y-1.5 flex-1 animate-fade-in">
                                     <div className="flex justify-between items-start">
-                                      <span className="text-[9.5px] font-black uppercase text-slate-400 tracking-wider">
+                                      <span className="text-[9.5px] font-black uppercase text-slate-500 tracking-wider font-mono bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">
                                         Distância: {l.distance} Km
                                       </span>
 
                                       <button
                                         onClick={() => handleDeleteLine(l.id)}
-                                        className="text-slate-500 hover:text-red-400 p-0.5 rounded transition-colors"
+                                        className="text-slate-400 hover:text-red-500 p-1.5 rounded hover:bg-red-50 transition-colors cursor-pointer"
                                         title="Remover linha"
                                       >
                                         <Trash2 size={13} />
                                       </button>
                                     </div>
 
-                                    <h4 className="text-xs font-extrabold text-white leading-normal font-sans pr-6">
+                                    <h4 className="text-xs font-black text-slate-800 leading-normal font-sans pr-6">
                                       {origin ? origin.name : 'Localidade Desconhecida'} ➔ {dest ? dest.name : 'Localidade Desconhecida'}
                                     </h4>
 
-                                    <div className="flex items-center gap-2 pt-2 text-[10.5px] font-mono text-slate-400">
-                                      <span className="flex items-center gap-0.5">
-                                        <Clock size={11} /> {dLabel}
+                                    <div className="flex items-center gap-2 pt-1 text-[10.5px] font-mono text-slate-500 flex-wrap">
+                                      <span className="flex items-center gap-0.5 font-sans font-bold bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200">
+                                        <Clock size={11} className="text-slate-400" /> {dLabel}
                                       </span>
-                                      <span>•</span>
-                                      <span className="text-blue-400 font-semibold font-sans uppercase">
-                                        {l.serviceType}
+                                      <span className="text-blue-700 font-extrabold font-mono uppercase text-[9.5px] bg-blue-50 border border-blue-105 px-1.5 py-0.5 rounded">
+                                        {itineraryLabels[(l as any).itineraryType] || '⚡ Rota Direta'}
                                       </span>
                                     </div>
                                   </div>
 
-                                  <div className="pt-3 mt-3 border-t border-slate-800 flex justify-between items-center text-[10.5px] font-sans text-slate-500">
-                                    <span>Cadastrada por {activeCompany.code}</span>
-                                    <span className="font-semibold font-mono text-slate-350">{connectedSchedules} partidas programadas</span>
+                                  <div className="pt-3 mt-3 border-t border-slate-150 flex flex-col gap-2 text-[10.5px] font-sans text-slate-600">
+                                    <div className="flex justify-between items-center">
+                                      <span>Parceira: <span className="font-bold text-slate-800">{activeCompany.code}</span></span>
+                                      <span className="font-bold font-mono text-slate-750">{connectedSchedules} partidas</span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setSelectedLineForSchedules(l);
+                                        setEditingScheduleId(null);
+                                        setQuickSchedError('');
+                                        setQuickSchedTime('');
+                                      }}
+                                      className="w-full mt-1.5 py-2 bg-blue-600 hover:bg-blue-700 hover:border-blue-700 cursor-pointer text-white text-xs font-extrabold rounded-lg shadow-xs flex items-center justify-center gap-1.5 transition-all text-center"
+                                    >
+                                      <Calendar size={13} />
+                                      Grade de Horários ({connectedSchedules}) ➔
+                                    </button>
                                   </div>
                                 </div>
                               );
@@ -1884,20 +2033,252 @@ export default function App() {
                   </div>
                 )}
 
+                {/* 4.1 Balloon Popover Modal for managed route schedules */}
+                {selectedLineForSchedules && (() => {
+                  const line = selectedLineForSchedules;
+                  const orig = cities.find(c => c.id === line.originCityId);
+                  const dest = cities.find(c => c.id === line.destinationCityId);
+                  const lineSchedules = schedules.filter(s => s.lineId === line.id);
+                  const itineraryLabels: Record<string, string> = {
+                    direta: 'Expressa / Direta',
+                    paradas: 'Com Paradas (Pinga-Pinga)',
+                    'semi-direta': 'Semi-Direta',
+                  };
+
+                  return (
+                    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 font-sans">
+                      <div className="bg-white border border-slate-200 shadow-2xl rounded-2xl max-w-xl w-full flex flex-col max-h-[90vh] overflow-hidden antialiased animate-fade-in">
+                        {/* Header */}
+                        <div className="bg-slate-900 text-white p-4.5 flex justify-between items-center">
+                          <div>
+                            <span className="text-[9px] uppercase font-mono font-black text-blue-450 bg-blue-50 px-2 py-0.5 rounded border border-blue-200">
+                              ⏱️ Quadro Operacional de Viagens
+                            </span>
+                            <h4 className="text-sm font-black tracking-tight pt-1 leading-tight uppercase font-sans">
+                              {orig?.name} ({orig?.code}) ➔ {dest?.name} ({dest?.code})
+                            </h4>
+                            <p className="text-[10px] text-slate-350 font-medium italic">
+                              Roteiro de Viagem — {itineraryLabels[(line as any).itineraryType] || 'Rota Direta'} • {line.distance} km
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => setSelectedLineForSchedules(null)}
+                            className="bg-slate-800 hover:bg-slate-700 text-slate-305 hover:text-white p-2 rounded-xl transition-all cursor-pointer font-bold text-xs"
+                            title="Fechar Janela"
+                          >
+                            ✖️
+                          </button>
+                        </div>
+
+                        {/* Middle contents scrollable */}
+                        <div className="p-5 overflow-y-auto space-y-4 text-xs">
+                          {/* List of active schedules */}
+                          <div>
+                            <span className="text-[10px] text-slate-550 font-bold block uppercase tracking-wider mb-2">
+                              🕒 Partidas Programadas Vigentes ({lineSchedules.length})
+                            </span>
+
+                            {lineSchedules.length === 0 ? (
+                              <div className="py-10 text-center text-slate-500 border border-slate-200 border-dashed rounded-xl font-medium">
+                                Nenhuma partida programada neste roteiro.
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                {lineSchedules.map(sch => {
+                                  const isEditing = editingScheduleId === sch.id;
+                                  return (
+                                    <div
+                                      key={sch.id}
+                                      className="p-3 bg-slate-50 border border-slate-200 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-2 hover:border-slate-300 transition-colors"
+                                    >
+                                      {isEditing ? (
+                                        <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-2 py-1 flex-1">
+                                          <div>
+                                            <label className="text-[9px] text-slate-500 font-bold block uppercase mb-0.5">Horário</label>
+                                            <input
+                                              type="text"
+                                              maxLength={5}
+                                              value={editSchedTime}
+                                              onChange={(e) => setEditSchedTime(e.target.value)}
+                                              placeholder="HH:MM"
+                                              className="w-full px-2 py-1.5 bg-white border border-slate-300 rounded text-xs font-mono font-bold text-slate-800 focus:border-blue-500 focus:outline-none"
+                                            />
+                                          </div>
+                                          <div>
+                                            <label className="text-[9px] text-slate-500 font-bold block uppercase mb-0.5">Frequência</label>
+                                            <select
+                                              value={editSchedFreq}
+                                              onChange={(e) => setEditSchedFreq(e.target.value as any)}
+                                              className="w-full px-2 py-1.5 bg-white border border-slate-305 rounded text-xs text-slate-800"
+                                            >
+                                              <option value="diaria">⚡ Diária</option>
+                                              <option value="seg-sex">🗓️ Seg a Sex</option>
+                                              <option value="fds">🏖️ Finais de Semana</option>
+                                              <option value="semanal">🎒 Semanal</option>
+                                            </select>
+                                          </div>
+                                          <div>
+                                            <label className="text-[9px] text-slate-500 font-bold block uppercase mb-0.5">Classe de Carro</label>
+                                            <select
+                                              value={editSchedService}
+                                              onChange={(e) => setEditSchedService(e.target.value as any)}
+                                              className="w-full px-2 py-1.5 bg-white border border-slate-305 rounded text-xs text-slate-800"
+                                            >
+                                              <option value="convencional">🚌 Convencional (42 seats)</option>
+                                              <option value="executivo">🌟 Executivo (46 seats)</option>
+                                              <option value="leito">💤 Leito Especial (28 seats)</option>
+                                            </select>
+                                          </div>
+                                        </div>
+                                      ) : (
+                                        <div className="flex items-center gap-2 flex-wrap text-slate-700">
+                                          <span className="font-mono font-black text-xs bg-slate-200 text-slate-900 border border-slate-300 px-2.5 py-0.5 rounded-md">
+                                            ⏱️ {sch.departureTime}
+                                          </span>
+                                          <span className="text-[9.5px] uppercase font-bold text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded">
+                                            {sch.frequency === 'diaria' ? 'Diária' : sch.frequency === 'seg-sex' ? 'Segunda-Sexta' : sch.frequency === 'fds' ? 'Sábado/Domingo' : 'Semanal'}
+                                          </span>
+                                          <span className={`text-[9.5px] font-black uppercase px-2 py-0.5 rounded border ${
+                                            sch.serviceType === 'leito' 
+                                              ? 'bg-purple-50 text-purple-700 border-purple-100'
+                                              : sch.serviceType === 'executivo'
+                                              ? 'bg-blue-50 text-blue-700 border-blue-105'
+                                              : 'bg-emerald-50 text-emerald-700 border-emerald-105'
+                                          }`}>
+                                            {sch.serviceType === 'leito' ? '💤 Leito [28 Pol]' : sch.serviceType === 'executivo' ? '🌟 Executivo [46 Pol]' : '🚌 Convencional [42 Pol]'}
+                                          </span>
+                                        </div>
+                                      )}
+
+                                      {/* Action buttons */}
+                                      <div className="flex gap-1 items-center self-end md:self-auto font-sans font-bold">
+                                        {isEditing ? (
+                                          <>
+                                            <button
+                                              onClick={() => handleQuickUpdateSchedule(sch.id, line.id)}
+                                              className="px-2.5 py-1.5 bg-green-600 hover:bg-green-700 text-white rounded text-[10px] uppercase font-bold cursor-pointer"
+                                            >
+                                              Confirmar
+                                            </button>
+                                            <button
+                                              onClick={() => setEditingScheduleId(null)}
+                                              className="px-2.5 py-1.5 bg-slate-400 hover:bg-slate-505 text-white rounded text-[10px] uppercase font-bold cursor-pointer"
+                                            >
+                                              Cancelar
+                                            </button>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <button
+                                              onClick={() => {
+                                                setEditingScheduleId(sch.id);
+                                                setEditSchedTime(sch.departureTime);
+                                                setEditSchedFreq(sch.frequency);
+                                                setEditSchedService(sch.serviceType);
+                                              }}
+                                              className="px-2.5 py-1 bg-white hover:bg-blue-50 border border-slate-200 text-slate-700 hover:border-blue-400 font-extrabold rounded text-[10.5px] transition-all cursor-pointer"
+                                            >
+                                              ✏️ Editar
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() => handleDeleteSchedule(sch.id)}
+                                              className="px-1.5 py-1 bg-white hover:bg-red-50 border border-slate-200 text-slate-400 hover:text-red-500 hover:border-red-300 rounded transition-all cursor-pointer"
+                                              title="Excluir Horário"
+                                            >
+                                              🗑️
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Quick Add Form Section */}
+                          <div className="pt-4 border-t border-slate-150 space-y-3 bg-slate-50 -mx-5 -mb-5 p-5">
+                            <span className="text-[10px] text-slate-700 font-extrabold block uppercase tracking-wider">
+                              ➕ Adicionar Novo Partida Programada
+                            </span>
+
+                            {quickSchedError && (
+                              <div className="p-2 bg-red-50 border border-red-150 text-red-700 rounded text-[11px] font-semibold">
+                                ⚠️ {quickSchedError}
+                              </div>
+                            )}
+
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end">
+                              <div className="space-y-0.5 col-span-2 md:col-span-1">
+                                <label className="text-[9px] text-slate-500 font-bold block uppercase">Partida (HH:MM)</label>
+                                <input
+                                  type="text"
+                                  maxLength={5}
+                                  value={quickSchedTime}
+                                  onChange={(e) => setQuickSchedTime(e.target.value)}
+                                  placeholder="Ex: 08:30"
+                                  className="w-full px-2.5 py-2 bg-white border border-slate-200 rounded text-xs font-mono font-bold text-slate-800 focus:outline-none focus:border-blue-500"
+                                />
+                              </div>
+
+                              <div className="space-y-0.5 col-span-2 md:col-span-1">
+                                <label className="text-[9px] text-slate-500 font-bold block uppercase">Frequência</label>
+                                <select
+                                  value={quickSchedFreq}
+                                  onChange={(e) => setQuickSchedFreq(e.target.value as any)}
+                                  className="w-full px-2 py-2 bg-white border border-slate-200 rounded text-xs text-slate-850"
+                                >
+                                  <option value="diaria">⚡ Diária</option>
+                                  <option value="seg-sex">🗓️ Seg-Sex</option>
+                                  <option value="fds">🏖️ Sáb/Dom</option>
+                                  <option value="semanal">🎒 Semanal</option>
+                                </select>
+                              </div>
+
+                              <div className="space-y-0.5 col-span-2 md:col-span-1">
+                                <label className="text-[9px] text-slate-500 font-bold block uppercase">Classe de Carro</label>
+                                <select
+                                  value={quickSchedService}
+                                  onChange={(e) => setQuickSchedService(e.target.value as any)}
+                                  className="w-full px-2 py-2 bg-white border border-slate-200 rounded text-xs text-slate-850 font-bold"
+                                >
+                                  <option value="convencional">🚌 Convencional</option>
+                                  <option value="executivo">🌟 Executivo</option>
+                                  <option value="leito">💤 Leito Especial</option>
+                                </select>
+                              </div>
+
+                              <button
+                                type="button"
+                                onClick={() => handleQuickCreateSchedule(line.id)}
+                                className="w-full md:col-span-1 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-extrabold tracking-tight leading-tight uppercase cursor-pointer"
+                              >
+                                Programar
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
+
                 {/* 5. OPERATIONAL SCHEDULE PAGE */}
                 {activeTab === 'schedules' && (
                   <div className="space-y-6 animate-fade-in">
                     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                       
                       {/* Left: Schedule setup parameters and forms */}
-                      <div className="lg:col-span-4 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
-                        <div className="space-y-0.5 border-b border-slate-700/60 pb-3">
-                          <h4 className="text-xs font-black text-white uppercase tracking-wider font-sans">Agendar Saída</h4>
-                          <span className="text-[10px] text-slate-400 block font-sans">Estabeleça uma grade operacional dinâmica</span>
+                      <div className="lg:col-span-4 bg-white border border-slate-200 p-5 rounded-2xl space-y-4 text-xs font-sans shadow-sm">
+                        <div className="space-y-0.5 border-b border-slate-150 pb-3">
+                          <h4 className="text-xs font-black text-slate-850 uppercase tracking-wider font-sans">Agendar Saída</h4>
+                          <span className="text-[10px] text-slate-500 block font-sans font-medium">Estabeleça uma grade operacional dinâmica</span>
                         </div>
 
                         {schedError && (
-                          <div className="p-2.5 bg-red-500/15 border border-red-500/25 text-red-300 rounded text-xs font-semibold">
+                          <div className="p-2.5 bg-red-50 border border-red-150 text-red-700 rounded text-xs font-semibold">
                             ⚠️ {schedError}
                           </div>
                         )}
@@ -1905,11 +2286,11 @@ export default function App() {
                         <form onSubmit={handleCreateSchedule} className="space-y-4 text-xs font-sans">
                           
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Rota / Conexão</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Rota / Conexão</label>
                             <select
                               value={schedLineId}
                               onChange={(e) => setSchedLineId(e.target.value)}
-                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800"
                             >
                               <option value="">-- Selecione uma Rota --</option>
                               {lines.map(l => {
@@ -1925,7 +2306,7 @@ export default function App() {
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Horário de Saída</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Horário de Saída</label>
                             <input
                               type="text"
                               required
@@ -1933,16 +2314,16 @@ export default function App() {
                               maxLength={5}
                               value={schedDepartureTime}
                               onChange={(e) => setSchedDepartureTime(e.target.value)}
-                              className="w-full px-3.5 py-2 bg-slate-900 border border-slate-700 rounded text-xs focus:outline-none focus:border-blue-500 font-mono font-bold text-center"
+                              className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded text-xs focus:outline-none focus:border-blue-500 font-mono font-bold text-center text-slate-850"
                             />
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Frequência Semanal</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Frequência Semanal</label>
                             <select
                               value={schedFrequency}
                               onChange={(e) => setSchedFrequency(e.target.value as any)}
-                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800"
                             >
                               <option value="diaria">Saídas Diárias</option>
                               <option value="seg-sex">Segunda a Sexta-Feira</option>
@@ -1952,11 +2333,11 @@ export default function App() {
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[10px] text-slate-400 font-bold block uppercase tracking-wider">Serviço Escalonado</label>
+                            <label className="text-[10px] text-slate-500 font-bold block uppercase tracking-wider">Serviço Escalonado</label>
                             <select
                               value={schedServiceType}
                               onChange={(e) => setSchedServiceType(e.target.value as any)}
-                              className="w-full px-2 py-2 bg-slate-900 border border-slate-700 rounded text-xs text-white"
+                              className="w-full px-2 py-2 bg-slate-50 border border-slate-200 rounded text-xs text-slate-800"
                             >
                               <option value="convencional">🚌 Convencional</option>
                               <option value="executivo">🌟 Executivo</option>
@@ -1967,21 +2348,21 @@ export default function App() {
                           {/* Live Dynamic Projections inside parameters */}
                           {(() => {
                             if (!schedLineId || !/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/.test(schedDepartureTime)) return null;
-                            const prj = getScheduleDemandEstimation(schedLineId, schedDepartureTime, schedFrequency, undefined, schedServiceType, lines);
+                            const prj = getScheduleDemandEstimation(schedLineId, schedDepartureTime, schedFrequency, undefined, schedServiceType, lines, cities);
                             if (!prj) return null;
 
                             return (
-                              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-[11px] space-y-1">
-                                <span className="font-extrabold text-blue-400 block uppercase tracking-wider text-[9.5px]">📊 Projeção Operacional Corrente:</span>
+                              <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg text-[11px] space-y-1">
+                                <span className="font-extrabold text-blue-700 block uppercase tracking-wider text-[9.5px]">📊 Projeção Operacional Corrente:</span>
                                 <div className="flex justify-between">
-                                  <span className="text-slate-400">Ocupação Média Projeta:</span>
-                                  <span className="font-bold text-white font-mono">{prj.occupancyRate}%</span>
+                                  <span className="text-slate-550 font-medium">Ocupação Média Projetada:</span>
+                                  <span className="font-bold text-slate-800 font-mono">{prj.occupancyRate}%</span>
                                 </div>
                                 <div className="flex justify-between">
-                                  <span className="text-slate-400 font-sans">Passageiros Estimados:</span>
-                                  <span className="font-bold text-white font-mono">{prj.pMin} a {prj.pMax} paxs</span>
+                                  <span className="text-slate-550 font-medium">Passageiros Estimados:</span>
+                                  <span className="font-bold text-slate-800 font-mono">{prj.pMin} a {prj.pMax} paxs</span>
                                 </div>
-                                <div className="text-[9.5px] text-slate-350 italic leading-tight pt-1 border-t border-slate-700/60 font-sans">{prj.timeLabel} • {prj.explanation}</div>
+                                <div className="text-[9.5px] text-slate-500 italic leading-tight pt-1 border-t border-slate-150 font-sans">{prj.timeLabel} • {prj.explanation}</div>
                               </div>
                             );
                           })()}
@@ -1996,15 +2377,15 @@ export default function App() {
                       </div>
 
                       {/* Right: Grid of active programmed schedules */}
-                      <div className="lg:col-span-8 bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
-                        <div>
-                          <h4 className="text-xs font-black text-white uppercase tracking-wider font-sans">Quadro Horário Comercial</h4>
-                          <span className="text-[10px] text-slate-400 block font-sans">Escalas de partidas programadas por linha</span>
+                      <div className="lg:col-span-8 bg-white border border-slate-200 p-5 rounded-2xl space-y-4 shadow-sm">
+                        <div className="pb-1 border-b border-slate-150">
+                          <h4 className="text-xs font-black text-slate-855 uppercase tracking-wider font-sans">Quadro Horário Comercial</h4>
+                          <span className="text-[10px] text-slate-500 block font-sans font-medium">Escalas de partidas programadas por linha</span>
                         </div>
 
                         {schedules.length === 0 ? (
-                          <div className="py-24 text-center text-slate-400 border border-slate-800/80 border-dashed rounded-xl text-xs space-y-2">
-                            <CalendarClock size={24} className="text-slate-700 mx-auto" />
+                          <div className="py-24 text-center text-slate-400 border border-slate-200 border-dashed rounded-xl text-xs space-y-2">
+                            <CalendarClock size={24} className="text-slate-400 mx-auto" />
                             <span>Nenhum horário cadastrado. Inicie um agendamento novo no formulário ao lado.</span>
                           </div>
                         ) : (
@@ -2017,37 +2398,37 @@ export default function App() {
                               const dest = cities.find(c => c.id === line.destinationCityId);
 
                               return (
-                                <div key={line.id} className="p-4 bg-slate-900 border border-slate-800 rounded-xl space-y-3">
-                                  <h4 className="text-xs font-black text-white uppercase tracking-wider font-sans pb-1.5 border-b border-slate-800/80">
+                                <div key={line.id} className="p-4 bg-slate-50/40 border border-slate-200 rounded-xl space-y-3">
+                                  <h4 className="text-xs font-black text-slate-800 uppercase tracking-wider font-sans pb-1.5 border-b border-slate-150">
                                     Conexão: {orig?.name} ➔ {dest?.name}
                                   </h4>
 
                                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                     {lineSchedule.map(sch => {
-                                      const est = getScheduleDemandEstimation(sch.lineId, sch.departureTime, sch.frequency, sch.id, sch.serviceType, lines);
+                                      const est = getScheduleDemandEstimation(sch.lineId, sch.departureTime, sch.frequency, sch.id, sch.serviceType, lines, cities);
                                       const feasibility = checkScheduleFeasibility(sch, line, schedules, lines, buses);
 
                                       return (
                                         <div
                                           key={sch.id}
-                                          className="p-3 bg-slate-850 border border-slate-800 rounded-lg flex flex-col justify-between hover:border-slate-700 transition-colors"
+                                          className="p-3 bg-white border border-slate-150 rounded-lg flex flex-col justify-between hover:border-blue-400 transition-colors shadow-xs"
                                         >
                                           <div className="flex justify-between items-start mb-1 h-8">
                                             <div className="flex items-center gap-1.5 flex-wrap">
-                                              <span className="font-mono font-bold text-xs bg-blue-600/10 text-blue-400 border border-blue-500/10 px-2 py-0.5 rounded">
+                                              <span className="font-mono font-bold text-xs bg-blue-50 text-blue-700 border border-blue-100 px-2 py-0.5 rounded">
                                                 ⏱️ {sch.departureTime}
                                               </span>
-                                              <span className="text-[9px] uppercase font-bold text-slate-400 font-mono bg-slate-800 px-1 py-0.5 rounded">
+                                              <span className="text-[9px] uppercase font-bold text-slate-500 font-mono bg-slate-100 px-1 py-0.5 rounded border border-slate-200">
                                                 {sch.frequency === 'diaria' ? 'Dia-a-Dia' : sch.frequency}
                                               </span>
-                                              <span className="text-[9.5px] uppercase font-black text-blue-450 font-sans">
+                                              <span className="text-[9.5px] uppercase font-black text-slate-700 font-sans">
                                                 {sch.serviceType}
                                               </span>
                                             </div>
 
                                             <button
                                               onClick={() => handleDeleteSchedule(sch.id)}
-                                              className="text-slate-500 hover:text-red-400 p-0.5 rounded transition-colors"
+                                              className="text-slate-400 hover:text-red-500 p-0.5 rounded transition-colors cursor-pointer"
                                               title="Excluir horário"
                                             >
                                               <Trash2 size={13} />
@@ -2056,14 +2437,14 @@ export default function App() {
 
                                           {/* Demand micro-projection */}
                                           {est && (
-                                            <div className="bg-slate-900/60 p-2 rounded text-[10px] leading-normal text-slate-400 space-y-1 mb-2">
+                                            <div className="bg-slate-50/80 border border-slate-150 p-2 rounded text-[10px] leading-normal text-slate-600 space-y-1 mb-2">
                                               <div className="flex justify-between font-medium">
                                                 <span>Fluxo Esperado:</span>
-                                                <span className="text-white font-mono font-bold">{est.pMin}–{est.pMax} paxs</span>
+                                                <span className="text-slate-800 font-mono font-bold">{est.pMin}–{est.pMax} paxs</span>
                                               </div>
                                               <div className="flex justify-between font-medium">
                                                 <span>Ocupação Previsível:</span>
-                                                <span className="text-indigo-400 font-mono font-bold">{est.occupancyRate}%</span>
+                                                <span className="text-blue-700 font-mono font-bold">{est.occupancyRate}%</span>
                                               </div>
                                             </div>
                                           )}
@@ -2071,10 +2452,10 @@ export default function App() {
                                           {/* Feasibility Alert */}
                                           <div className={`p-1.5 rounded text-[9.5px] leading-tight font-medium flex gap-1 ${
                                             feasibility.level === 'warning'
-                                              ? 'bg-red-500/10 text-red-400'
+                                              ? 'bg-rose-50 text-rose-700 border border-rose-100'
                                               : feasibility.level === 'info'
-                                              ? 'bg-amber-500/10 text-amber-400'
-                                              : 'bg-green-500/10 text-green-400'
+                                              ? 'bg-amber-50 text-amber-700 border border-amber-100'
+                                              : 'bg-emerald-50 text-emerald-700 border border-emerald-110'
                                           }`}>
                                             <Info size={11} className="flex-shrink-0" />
                                             <span className="line-clamp-2">{feasibility.message}</span>
@@ -2098,15 +2479,15 @@ export default function App() {
                 {/* 6. TRAFFIC SIMULATOR PANEL */}
                 {activeTab === 'simulator' && (
                   <div className="space-y-6 animate-fade-in text-sans">
-                    <div className="bg-slate-800 border border-slate-800 p-5 rounded-2xl space-y-4">
-                      <div className="border-b border-slate-700/60 pb-3">
-                        <h4 className="text-xs font-black text-white uppercase tracking-wider font-sans">Simulação de Partidas e Despachos</h4>
-                        <span className="text-[10px] text-slate-400 block font-sans">Mecanismo dinâmico de tráfego terrestre rodoviário das linhas ativas</span>
+                    <div className="bg-white border border-slate-200 p-5 rounded-2xl space-y-4 shadow-sm text-xs font-sans">
+                      <div className="border-b border-slate-150 pb-3">
+                        <h4 className="text-xs font-black text-slate-855 uppercase tracking-wider font-sans">Simulação de Partidas e Despachos</h4>
+                        <span className="text-[10px] text-slate-500 block font-sans font-medium">Mecanismo dinâmico de tráfego terrestre rodoviário das linhas ativas</span>
                       </div>
 
-                      <div className="p-3 bg-gradient-to-r from-blue-900/40 to-slate-800 rounded-xl border border-blue-500/20 text-xs text-slate-300 leading-relaxed font-sans space-y-1 mb-4">
-                        <span className="font-extrabold text-blue-400 flex items-center gap-1">
-                          <Sparkles size={13} className="text-yellow-300" /> Painel de Controle de Simulação Coletora
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-600 leading-relaxed font-sans space-y-1 mb-4">
+                        <span className="font-extrabold text-blue-700 flex items-center gap-1">
+                          <Sparkles size={13} className="text-amber-500" /> Painel de Controle de Simulação Coletora
                         </span>
                         <p>
                           Planejou seus horários? Aqui você pode colocar os carros na rodovia! Clique em <strong>"Iniciar Despacho"</strong> abaixo. O simulador selecionará automaticamente um ônibus livre de sua garagem corporativa, preencherá poltronas de passageiros conforme projeções históricas, e atualizará a progressão por satélite da viagem em tempo real. Ao concluir a viagem, o faturamento das passagens alimentará seu Dashboard principal!
@@ -2115,10 +2496,10 @@ export default function App() {
 
                       {/* Active Voyages Section */}
                       <div className="space-y-3.5">
-                        <span className="text-[10px] text-slate-400 font-extrabold block uppercase tracking-wider">Viagens Rodoviárias Ativas</span>
+                        <span className="text-[10px] text-slate-500 font-extrabold block uppercase tracking-wider">Viagens Rodoviárias Ativas</span>
                         
                         {activeVoyages.length === 0 ? (
-                          <div className="p-8 bg-slate-900/60 border border-slate-800 border-dashed rounded-xl text-center text-xs text-slate-500">
+                          <div className="p-8 bg-slate-50/50 border border-slate-200 border-dashed rounded-xl text-center text-xs text-slate-400">
                             Não há nenhuma viagem ocorrendo na estrada neste momento. Inicie um despacho na grade abaixo.
                           </div>
                         ) : (
@@ -2130,28 +2511,28 @@ export default function App() {
                               const bus = buses.find(b => b.id === v.busId);
 
                               return (
-                                <div key={v.id} className="p-4 bg-slate-900 border border-slate-750 rounded-xl space-y-3 animate-fade-in font-sans">
+                                <div key={v.id} className="p-4 bg-white border border-slate-200 hover:border-slate-300 rounded-xl space-y-3 animate-fade-in font-sans shadow-xs transition-colors">
                                   <div className="flex justify-between items-center text-[10.5px]">
-                                    <span className="font-mono text-blue-450 font-extrabold uppercase">
+                                    <span className="font-mono text-blue-700 font-extrabold uppercase bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100">
                                       {bus?.plate || 'Bus'} - {bus?.model.split(' ')[0]}
                                     </span>
-                                    <span className="font-mono font-bold text-white bg-blue-600/20 border border-blue-500/10 p-0.5 px-2 rounded-md">
+                                    <span className="font-mono font-bold text-slate-700 bg-slate-100 p-0.5 px-2 rounded-md border border-slate-200">
                                       Poltronas: {v.passengerCount} / {bus?.capacity} ocupadas
                                     </span>
                                   </div>
 
                                   <div className="space-y-1">
-                                    <h5 className="text-xs font-black text-white leading-normal pr-4">
+                                    <h5 className="text-xs font-black text-slate-800 leading-normal pr-4">
                                       {orig?.name} ➔ {dest?.name}
                                     </h5>
                                     
                                     {/* Progression bar */}
                                     <div className="space-y-1 pt-1.5">
-                                      <div className="flex justify-between text-[10px] text-slate-550 font-bold font-mono">
+                                      <div className="flex justify-between text-[10px] text-slate-500 font-bold font-mono">
                                         <span>Status: {v.progress === 100 ? '🎉 Viagem Finalizada' : '🚌 Em Trânsito'}</span>
                                         <span>Progresso: {v.progress}%</span>
                                       </div>
-                                      <div className="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden border border-slate-700/60">
+                                      <div className="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200">
                                         <div 
                                           className="bg-gradient-to-r from-blue-600 to-indigo-600 h-full rounded-full transition-all duration-1000" 
                                           style={{ width: `${v.progress}%` }}
@@ -2160,9 +2541,9 @@ export default function App() {
                                     </div>
                                   </div>
 
-                                  <div className="flex justify-between items-center pt-2.5 border-t border-slate-800">
-                                    <div className="text-[10px] text-slate-480 leading-normal font-sans text-slate-400">
-                                      Saturamento Estimado: <strong className="text-emerald-400 font-mono">R$ {(v.passengerCount * v.ticketPrice).toLocaleString('pt-BR')}</strong>
+                                  <div className="flex justify-between items-center pt-2.5 border-t border-slate-150">
+                                    <div className="text-[10px] leading-normal font-sans text-slate-500">
+                                      Faturamento Estimado: <strong className="text-emerald-600 font-mono text-opacity-100 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-100 font-extrabold">R$ {(v.passengerCount * v.ticketPrice).toLocaleString('pt-BR')}</strong>
                                     </div>
 
                                     <button
@@ -2170,8 +2551,8 @@ export default function App() {
                                       disabled={v.progress < 100}
                                       className={`px-3 py-1.5 rounded-lg text-[10.5px] font-extrabold cursor-pointer transition-colors ${
                                         v.progress === 100 
-                                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-600/10' 
-                                          : 'bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed'
+                                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-md shadow-emerald-650/10' 
+                                          : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
                                       }`}
                                       title={v.progress < 100 ? 'Aguarde o progresso do ônibus completar 100%' : 'Concluir viagem'}
                                     >
@@ -2186,15 +2567,15 @@ export default function App() {
                       </div>
 
                       {/* Ready dispatch options list */}
-                      <div className="space-y-3 pt-3">
-                        <span className="text-[10px] text-slate-400 font-extrabold block uppercase tracking-wider">Grid Operacional Disponível para Despacho</span>
+                      <div className="space-y-3 pt-3 font-sans">
+                        <span className="text-[10px] text-slate-500 font-extrabold block uppercase tracking-wider">Grid Operacional Disponível para Despacho</span>
                         
                         {schedules.length === 0 ? (
-                          <div className="p-4 bg-slate-900/40 rounded-xl text-center text-xs text-slate-550 italic">
+                          <div className="p-4 bg-slate-50/40 border border-slate-200 rounded-xl text-center text-xs text-slate-400 italic font-medium">
                             Nenhum horário cadastrado. Planeje horários na aba "Agenda e Saídas" antes de despachar carros.
                           </div>
                         ) : (
-                          <div className="bg-slate-900 rounded-xl divide-y divide-slate-800 overflow-hidden font-sans">
+                          <div className="bg-white rounded-xl border border-slate-200 divide-y divide-slate-150 overflow-hidden font-sans shadow-xs">
                             {schedules.map(sch => {
                               const line = lines.find(l => l.id === sch.lineId);
                               const orig = cities.find(c => c.id === line?.originCityId);
@@ -2202,20 +2583,20 @@ export default function App() {
                               const activeOnThis = activeVoyages.filter(v => v.scheduleId === sch.id).length;
 
                               return (
-                                <div key={sch.id} className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 hover:bg-slate-850/50 transition-colors">
+                                <div key={sch.id} className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 hover:bg-slate-50/50 transition-colors">
                                   <div>
                                     <div className="flex items-center gap-2 mb-1">
-                                      <span className="font-mono text-xs text-blue-400 font-extrabold bg-blue-500/10 border border-blue-500/10 py-0.5 px-2 rounded-md">
+                                      <span className="font-mono text-xs text-blue-700 font-extrabold bg-blue-50 border border-blue-100 py-0.5 px-2 rounded-md">
                                         ⏱️ {sch.departureTime}
                                       </span>
-                                      <span className="text-[10px] uppercase font-bold text-slate-400 bg-slate-850 py-0.5 px-2 rounded">
+                                      <span className="text-[10px] uppercase font-bold text-slate-500 bg-slate-100 border border-slate-200 py-0.5 px-2 rounded">
                                         {sch.frequency}
                                       </span>
-                                      <span className="text-[10.5px] uppercase font-bold text-slate-450 font-sans">
+                                      <span className="text-[10.5px] uppercase font-bold text-slate-600 font-sans">
                                         {sch.serviceType}
                                       </span>
                                     </div>
-                                    <h5 className="text-xs font-extrabold text-white">
+                                    <h5 className="text-xs font-extrabold text-slate-800">
                                       {orig?.name} ➔ {dest?.name}
                                     </h5>
                                     <span className="text-[10px] text-slate-500 leading-normal font-sans">
@@ -2225,13 +2606,13 @@ export default function App() {
 
                                   <div className="flex items-center gap-2 flex-wrap self-end sm:self-center">
                                     {activeOnThis > 0 ? (
-                                      <span className="px-3 py-1.5 bg-blue-600/10 text-blue-450 border border-blue-500/10 text-xs font-bold rounded-lg animate-pulse">
+                                      <span className="px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-100 text-xs font-bold rounded-lg animate-pulse font-mono">
                                         Em Estrada Ativa ({activeOnThis})
                                       </span>
                                     ) : (
                                       <button
                                         onClick={() => handleStartSimulatedVoyage(sch)}
-                                        className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-lg transition-all flex items-center gap-1"
+                                        className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-lg transition-all flex items-center gap-1 cursor-pointer"
                                       >
                                         <Play size={11} fill="white" /> Iniciar Viagem
                                       </button>
